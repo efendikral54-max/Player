@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>TV Player Local</title>
+    <title>TV Player Auto-Unmute</title>
     <script src="https://cdn.jsdelivr.net/npm/hls.js@latest"></script>
     <style>
         body, html { 
@@ -22,67 +22,73 @@
 </head>
 <body>
     <video id="video" playsinline autoplay muted></video>
-    <div id="msg">Yükleniyor...<br>Lütfen bekleyin</div>
+    <div id="msg">Yükleniyor...</div>
 
     <script>
         const video = document.getElementById('video');
         const msg = document.getElementById('msg');
-        
-        // WICHTIG: Wir holen die URL direkt aus Kodular (WebViewString)
-        // Das verhindert den "URI Query" Fehler!
-        var streamUrl = window.AppInventor.getWebViewString();
+        let hls = null;
+        let hasInteracted = false; // Merkt sich, ob schon mal gedrückt wurde
+
+        function getUrl() {
+            return window.AppInventor.getWebViewString();
+        }
 
         function forcePlay() {
+            hasInteracted = true; // Status auf "aktiviert" setzen
             video.muted = false;
             video.volume = 1.0;
             video.play();
             msg.style.display = 'none';
         }
 
+        // Event-Listener für Fernbedienung/Klick
         window.addEventListener('keydown', forcePlay);
         window.addEventListener('click', forcePlay);
 
-        function initPlayer() {
-            if (!streamUrl) {
-                msg.innerHTML = "Hata: Kodular'dan Link gelmedi!";
-                return;
+        function startStream(url) {
+            if (!url) return;
+
+            // Alten Stream stoppen, falls vorhanden
+            if (hls) {
+                hls.destroy();
             }
 
             if (Hls.isSupported()) {
-                const hls = new Hls({
-                    debug: false,
-                    enableWorker: true,
-                    xhrSetup: function (xhr, url) { xhr.withCredentials = false; }
+                hls = new Hls({
+                    xhrSetup: function (xhr) { xhr.withCredentials = false; }
                 });
-                hls.loadSource(streamUrl);
+                hls.loadSource(url);
                 hls.attachMedia(video);
                 hls.on(Hls.Events.MANIFEST_PARSED, () => {
-                    video.play();
-                    msg.innerHTML = "Ses için OK tuşuna bas";
-                });
-                hls.on(Hls.Events.ERROR, (event, data) => {
-                    if (data.fatal) {
-                        hls.startLoad(); // Versucht bei Fehler neu zu laden
+                    // WICHTIG: Wenn wir schon mal interagiert haben, direkt Ton an!
+                    if (hasInteracted) {
+                        video.muted = false;
+                        video.play();
+                        msg.style.display = 'none';
+                    } else {
+                        video.play();
+                        msg.innerHTML = "Ses için OK tuşuna bas";
+                        msg.style.display = 'block';
                     }
                 });
             } else if (video.canPlayType('application/vnd.apple.mpegurl')) {
-                video.src = streamUrl;
+                video.src = url;
                 video.play();
             }
         }
-        
-        // Polling: Falls Kodular die URL erst nach dem Laden sendet
-        if(!streamUrl) {
-             setInterval(function(){
-                 var newUrl = window.AppInventor.getWebViewString();
-                 if(newUrl && newUrl !== streamUrl) {
-                     streamUrl = newUrl;
-                     initPlayer();
-                 }
-             }, 500);
-        } else {
-            initPlayer();
-        }
+
+        // Polling: Prüft ob Kodular einen neuen Sender schickt
+        let currentUrl = getUrl();
+        if (currentUrl) startStream(currentUrl);
+
+        setInterval(() => {
+            let newUrl = getUrl();
+            if (newUrl && newUrl !== currentUrl) {
+                currentUrl = newUrl;
+                startStream(newUrl);
+            }
+        }, 500);
     </script>
 </body>
 </html>
