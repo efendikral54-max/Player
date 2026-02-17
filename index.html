@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>TV Player Auto-Unmute</title>
+    <title>TV Player Force Auto</title>
     <script src="https://cdn.jsdelivr.net/npm/hls.js@latest"></script>
     <style>
         body, html { 
@@ -14,71 +14,102 @@
         video { position: absolute; width: 100%; height: 100%; object-fit: contain; z-index: 1; }
         #msg { 
             position: relative; z-index: 100; color: white; 
-            font-family: sans-serif; font-size: 22px; font-weight: bold;
+            font-family: sans-serif; font-size: 20px; font-weight: bold;
             text-align: center; background: rgba(0, 0, 0, 0.7); 
-            padding: 25px; border-radius: 15px; border: 2px solid rgba(255, 255, 255, 0.2);
+            padding: 20px; border-radius: 15px; 
+            display: none; /* Standardmäßig ausblenden */
         }
     </style>
 </head>
 <body>
-    <video id="video" playsinline autoplay muted></video>
+    <video id="video" playsinline autoplay></video>
     <div id="msg">Yükleniyor...</div>
 
     <script>
         const video = document.getElementById('video');
         const msg = document.getElementById('msg');
         let hls = null;
-        let hasInteracted = false; // Merkt sich, ob schon mal gedrückt wurde
 
         function getUrl() {
             return window.AppInventor.getWebViewString();
         }
 
-        function forcePlay() {
-            hasInteracted = true; // Status auf "aktiviert" setzen
+        // Funktion, die aggressiv versucht, den Ton einzuschalten
+        function forceAudio() {
             video.muted = false;
             video.volume = 1.0;
-            video.play();
-            msg.style.display = 'none';
         }
-
-        // Event-Listener für Fernbedienung/Klick
-        window.addEventListener('keydown', forcePlay);
-        window.addEventListener('click', forcePlay);
 
         function startStream(url) {
             if (!url) return;
 
-            // Alten Stream stoppen, falls vorhanden
+            // Altes HLS Objekt zerstören, um Speicher freizugeben
             if (hls) {
                 hls.destroy();
             }
 
+            // Lade-Nachricht kurz anzeigen
+            msg.style.display = 'block';
+
             if (Hls.isSupported()) {
                 hls = new Hls({
+                    // Wichtige Settings für schnelleren Start
+                    enableWorker: true,
+                    lowLatencyMode: true, 
                     xhrSetup: function (xhr) { xhr.withCredentials = false; }
                 });
+
                 hls.loadSource(url);
                 hls.attachMedia(video);
+
                 hls.on(Hls.Events.MANIFEST_PARSED, () => {
-                    // WICHTIG: Wenn wir schon mal interagiert haben, direkt Ton an!
-                    if (hasInteracted) {
-                        video.muted = false;
-                        video.play();
-                        msg.style.display = 'none';
-                    } else {
-                        video.play();
-                        msg.innerHTML = "Ses için OK tuşuna bas";
-                        msg.style.display = 'block';
+                    // SOFORT versuchen mit Ton zu starten
+                    video.muted = false; 
+                    
+                    var playPromise = video.play();
+
+                    if (playPromise !== undefined) {
+                        playPromise.then(_ => {
+                            // Hat funktioniert!
+                            msg.style.display = 'none';
+                        })
+                        .catch(error => {
+                            // Android hat geblockt? Dann Plan B:
+                            console.log("Autoplay blockiert, versuche Workaround...");
+                            video.muted = true; // Erst stumm starten
+                            video.play();
+                            msg.style.display = 'none';
+                            
+                            // Nach 100ms heimlich den Ton anschalten
+                            setTimeout(() => {
+                                video.muted = false;
+                            }, 500);
+                        });
                     }
                 });
+
+                hls.on(Hls.Events.ERROR, (event, data) => {
+                    if (data.fatal) {
+                        hls.startLoad();
+                    }
+                });
+
             } else if (video.canPlayType('application/vnd.apple.mpegurl')) {
                 video.src = url;
+                video.muted = false;
                 video.play();
             }
         }
 
-        // Polling: Prüft ob Kodular einen neuen Sender schickt
+        // Simuliert regelmäßig einen Klick, falls der Browser schläft
+        setInterval(() => {
+            if(video.paused && getUrl()) {
+                video.play();
+                video.muted = false;
+            }
+        }, 2000);
+
+        // Checkt alle 500ms auf neue URL von Kodular
         let currentUrl = getUrl();
         if (currentUrl) startStream(currentUrl);
 
