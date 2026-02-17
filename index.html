@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>TV Player Force Play</title>
+    <title>TV Player Local</title>
     <script src="https://cdn.jsdelivr.net/npm/hls.js@latest"></script>
     <style>
         body, html { 
@@ -14,110 +14,75 @@
         video { position: absolute; width: 100%; height: 100%; object-fit: contain; z-index: 1; }
         #msg { 
             position: relative; z-index: 100; color: white; 
-            font-family: sans-serif; font-size: 20px; font-weight: bold;
-            display: none;
+            font-family: sans-serif; font-size: 22px; font-weight: bold;
+            text-align: center; background: rgba(0, 0, 0, 0.7); 
+            padding: 25px; border-radius: 15px; border: 2px solid rgba(255, 255, 255, 0.2);
         }
     </style>
 </head>
 <body>
     <video id="video" playsinline autoplay muted></video>
-    <div id="msg">Yükleniyor...</div>
+    <div id="msg">Yükleniyor...<br>Lütfen bekleyin</div>
 
     <script>
         const video = document.getElementById('video');
         const msg = document.getElementById('msg');
-        let hls = null;
-        let isStreamLoaded = false;
+        
+        // WICHTIG: Wir holen die URL direkt aus Kodular (WebViewString)
+        // Das verhindert den "URI Query" Fehler!
+        var streamUrl = window.AppInventor.getWebViewString();
 
-        // 1. URL aus Kodular holen
-        function getUrl() {
-            return window.AppInventor.getWebViewString();
+        function forcePlay() {
+            video.muted = false;
+            video.volume = 1.0;
+            video.play();
+            msg.style.display = 'none';
         }
 
-        // 2. Die "Wachhund"-Funktion: Zwingt das Video zum Abspielen
-        function forceResume() {
-            if (isStreamLoaded && video.paused) {
-                console.log("Video war pausiert -> Erzwinge Play!");
-                video.muted = false; // Sicherstellen, dass Ton an ist
-                var playPromise = video.play();
-                
-                if (playPromise !== undefined) {
-                    playPromise.catch(error => {
-                        console.log("Browser blockiert noch, versuche es gleich wieder...");
-                        // Falls es blockiert, versuchen wir es stumm und schalten Ton gleich an
-                        video.muted = true;
-                        video.play();
-                        setTimeout(() => { video.muted = false; }, 500);
-                    });
-                }
+        window.addEventListener('keydown', forcePlay);
+        window.addEventListener('click', forcePlay);
+
+        function initPlayer() {
+            if (!streamUrl) {
+                msg.innerHTML = "Hata: Kodular'dan Link gelmedi!";
+                return;
             }
-        }
-
-        // 3. Event Listener: Wenn das Video "pause" meldet, sofort feuern!
-        video.addEventListener('pause', () => {
-            forceResume();
-        });
-
-        // 4. Stream starten
-        function startStream(url) {
-            if (!url) return;
-            if (hls) hls.destroy();
-
-            msg.style.display = 'block';
-            isStreamLoaded = false;
 
             if (Hls.isSupported()) {
-                hls = new Hls({
+                const hls = new Hls({
+                    debug: false,
                     enableWorker: true,
-                    xhrSetup: function (xhr) { xhr.withCredentials = false; }
+                    xhrSetup: function (xhr, url) { xhr.withCredentials = false; }
                 });
-                hls.loadSource(url);
+                hls.loadSource(streamUrl);
                 hls.attachMedia(video);
                 hls.on(Hls.Events.MANIFEST_PARSED, () => {
-                    isStreamLoaded = true;
-                    msg.style.display = 'none';
-                    forceResume(); // Sofort starten
+                    video.play();
+                    msg.innerHTML = "Ses için OK tuşuna bas";
                 });
-                // Fehlerbehandlung: Bei Fehler neu laden
                 hls.on(Hls.Events.ERROR, (event, data) => {
                     if (data.fatal) {
-                        hls.startLoad();
+                        hls.startLoad(); // Versucht bei Fehler neu zu laden
                     }
                 });
             } else if (video.canPlayType('application/vnd.apple.mpegurl')) {
-                video.src = url;
-                video.addEventListener('loadedmetadata', () => {
-                    isStreamLoaded = true;
-                    msg.style.display = 'none';
-                    forceResume();
-                });
+                video.src = streamUrl;
+                video.play();
             }
         }
-
-        // 5. Dauerschleife (Interval): Alle 1000ms prüfen, ob Video läuft
-        setInterval(() => {
-            // Prüft: Haben wir einen Stream? Und ist das Video pausiert?
-            if (isStreamLoaded && video.paused) {
-                forceResume();
-            }
-        }, 1000); 
-
-        // 6. Kodular Link Prüfung (Polling)
-        let currentUrl = getUrl();
-        if (currentUrl) startStream(currentUrl);
-
-        setInterval(() => {
-            let newUrl = getUrl();
-            if (newUrl && newUrl !== currentUrl) {
-                currentUrl = newUrl;
-                startStream(newUrl);
-            }
-        }, 500);
-
-        // Extra: Klick startet immer (Fallback)
-        document.body.addEventListener('click', forceResume);
-        document.body.addEventListener('keydown', forceResume);
-
+        
+        // Polling: Falls Kodular die URL erst nach dem Laden sendet
+        if(!streamUrl) {
+             setInterval(function(){
+                 var newUrl = window.AppInventor.getWebViewString();
+                 if(newUrl && newUrl !== streamUrl) {
+                     streamUrl = newUrl;
+                     initPlayer();
+                 }
+             }, 500);
+        } else {
+            initPlayer();
+        }
     </script>
 </body>
 </html>
