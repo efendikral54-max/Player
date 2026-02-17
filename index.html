@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>TV Player Force Auto</title>
+    <title>TV Player Force Play</title>
     <script src="https://cdn.jsdelivr.net/npm/hls.js@latest"></script>
     <style>
         body, html { 
@@ -15,101 +15,94 @@
         #msg { 
             position: relative; z-index: 100; color: white; 
             font-family: sans-serif; font-size: 20px; font-weight: bold;
-            text-align: center; background: rgba(0, 0, 0, 0.7); 
-            padding: 20px; border-radius: 15px; 
-            display: none; /* Standardmäßig ausblenden */
+            display: none;
         }
     </style>
 </head>
 <body>
-    <video id="video" playsinline autoplay></video>
+    <video id="video" playsinline autoplay muted></video>
     <div id="msg">Yükleniyor...</div>
 
     <script>
         const video = document.getElementById('video');
         const msg = document.getElementById('msg');
         let hls = null;
+        let isStreamLoaded = false;
 
+        // 1. URL aus Kodular holen
         function getUrl() {
             return window.AppInventor.getWebViewString();
         }
 
-        // Funktion, die aggressiv versucht, den Ton einzuschalten
-        function forceAudio() {
-            video.muted = false;
-            video.volume = 1.0;
+        // 2. Die "Wachhund"-Funktion: Zwingt das Video zum Abspielen
+        function forceResume() {
+            if (isStreamLoaded && video.paused) {
+                console.log("Video war pausiert -> Erzwinge Play!");
+                video.muted = false; // Sicherstellen, dass Ton an ist
+                var playPromise = video.play();
+                
+                if (playPromise !== undefined) {
+                    playPromise.catch(error => {
+                        console.log("Browser blockiert noch, versuche es gleich wieder...");
+                        // Falls es blockiert, versuchen wir es stumm und schalten Ton gleich an
+                        video.muted = true;
+                        video.play();
+                        setTimeout(() => { video.muted = false; }, 500);
+                    });
+                }
+            }
         }
 
+        // 3. Event Listener: Wenn das Video "pause" meldet, sofort feuern!
+        video.addEventListener('pause', () => {
+            forceResume();
+        });
+
+        // 4. Stream starten
         function startStream(url) {
             if (!url) return;
+            if (hls) hls.destroy();
 
-            // Altes HLS Objekt zerstören, um Speicher freizugeben
-            if (hls) {
-                hls.destroy();
-            }
-
-            // Lade-Nachricht kurz anzeigen
             msg.style.display = 'block';
+            isStreamLoaded = false;
 
             if (Hls.isSupported()) {
                 hls = new Hls({
-                    // Wichtige Settings für schnelleren Start
                     enableWorker: true,
-                    lowLatencyMode: true, 
                     xhrSetup: function (xhr) { xhr.withCredentials = false; }
                 });
-
                 hls.loadSource(url);
                 hls.attachMedia(video);
-
                 hls.on(Hls.Events.MANIFEST_PARSED, () => {
-                    // SOFORT versuchen mit Ton zu starten
-                    video.muted = false; 
-                    
-                    var playPromise = video.play();
-
-                    if (playPromise !== undefined) {
-                        playPromise.then(_ => {
-                            // Hat funktioniert!
-                            msg.style.display = 'none';
-                        })
-                        .catch(error => {
-                            // Android hat geblockt? Dann Plan B:
-                            console.log("Autoplay blockiert, versuche Workaround...");
-                            video.muted = true; // Erst stumm starten
-                            video.play();
-                            msg.style.display = 'none';
-                            
-                            // Nach 100ms heimlich den Ton anschalten
-                            setTimeout(() => {
-                                video.muted = false;
-                            }, 500);
-                        });
-                    }
+                    isStreamLoaded = true;
+                    msg.style.display = 'none';
+                    forceResume(); // Sofort starten
                 });
-
+                // Fehlerbehandlung: Bei Fehler neu laden
                 hls.on(Hls.Events.ERROR, (event, data) => {
                     if (data.fatal) {
                         hls.startLoad();
                     }
                 });
-
             } else if (video.canPlayType('application/vnd.apple.mpegurl')) {
                 video.src = url;
-                video.muted = false;
-                video.play();
+                video.addEventListener('loadedmetadata', () => {
+                    isStreamLoaded = true;
+                    msg.style.display = 'none';
+                    forceResume();
+                });
             }
         }
 
-        // Simuliert regelmäßig einen Klick, falls der Browser schläft
+        // 5. Dauerschleife (Interval): Alle 1000ms prüfen, ob Video läuft
         setInterval(() => {
-            if(video.paused && getUrl()) {
-                video.play();
-                video.muted = false;
+            // Prüft: Haben wir einen Stream? Und ist das Video pausiert?
+            if (isStreamLoaded && video.paused) {
+                forceResume();
             }
-        }, 2000);
+        }, 1000); 
 
-        // Checkt alle 500ms auf neue URL von Kodular
+        // 6. Kodular Link Prüfung (Polling)
         let currentUrl = getUrl();
         if (currentUrl) startStream(currentUrl);
 
@@ -120,6 +113,11 @@
                 startStream(newUrl);
             }
         }, 500);
+
+        // Extra: Klick startet immer (Fallback)
+        document.body.addEventListener('click', forceResume);
+        document.body.addEventListener('keydown', forceResume);
+
     </script>
 </body>
 </html>
