@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>TV Player Auto-Unmute</title>
+    <title>TV Player Persistent Interaction</title>
     <script src="https://cdn.jsdelivr.net/npm/hls.js@latest"></script>
     <style>
         body, html { 
@@ -17,6 +17,7 @@
             font-family: sans-serif; font-size: 22px; font-weight: bold;
             text-align: center; background: rgba(0, 0, 0, 0.7); 
             padding: 25px; border-radius: 15px; border: 2px solid rgba(255, 255, 255, 0.2);
+            display: none;
         }
     </style>
 </head>
@@ -28,31 +29,31 @@
         const video = document.getElementById('video');
         const msg = document.getElementById('msg');
         let hls = null;
-        let hasInteracted = false; // Merkt sich, ob schon mal gedrückt wurde
+
+        // NEU: Wir prüfen beim Start, ob im Speicher steht, dass schon mal gedrückt wurde
+        let hasInteracted = localStorage.getItem('user_has_clicked') === 'true';
 
         function getUrl() {
-            return window.AppInventor.getWebViewString();
+            return window.AppInventor ? window.AppInventor.getWebViewString() : "";
         }
 
         function forcePlay() {
-            hasInteracted = true; // Status auf "aktiviert" setzen
+            // Speichere dauerhaft, dass der User interagiert hat
+            hasInteracted = true;
+            localStorage.setItem('user_has_clicked', 'true');
+            
             video.muted = false;
             video.volume = 1.0;
             video.play();
             msg.style.display = 'none';
         }
 
-        // Event-Listener für Fernbedienung/Klick
         window.addEventListener('keydown', forcePlay);
         window.addEventListener('click', forcePlay);
 
         function startStream(url) {
             if (!url) return;
-
-            // Alten Stream stoppen, falls vorhanden
-            if (hls) {
-                hls.destroy();
-            }
+            if (hls) hls.destroy();
 
             if (Hls.isSupported()) {
                 hls = new Hls({
@@ -61,13 +62,13 @@
                 hls.loadSource(url);
                 hls.attachMedia(video);
                 hls.on(Hls.Events.MANIFEST_PARSED, () => {
-                    // WICHTIG: Wenn wir schon mal interagiert haben, direkt Ton an!
+                    // Wenn der Speicher sagt "hat schon mal geklickt", Ton sofort an!
                     if (hasInteracted) {
                         video.muted = false;
                         video.play();
                         msg.style.display = 'none';
                     } else {
-                        video.play();
+                        video.play(); // Läuft stumm im Hintergrund
                         msg.innerHTML = "Ses için OK tuşuna bas";
                         msg.style.display = 'block';
                     }
@@ -78,7 +79,6 @@
             }
         }
 
-        // Polling: Prüft ob Kodular einen neuen Sender schickt
         let currentUrl = getUrl();
         if (currentUrl) startStream(currentUrl);
 
