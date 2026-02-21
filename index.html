@@ -2,51 +2,69 @@
 <html lang="tr">
 <head>
 <meta charset="UTF-8">
+<title>TV Player Sound Force</title>
+<script src="https://cdn.jsdelivr.net/npm/hls.js@latest"></script>
 <style>
-  body { margin: 0; background: #000; overflow: hidden; height: 100vh; }
+  body { margin: 0; background: #000; overflow: hidden; height: 100vh; display: flex; align-items: center; justify-content: center; }
   video { width: 100%; height: 100vh; object-fit: contain; }
 </style>
-<script src="https://cdn.jsdelivr.net/npm/hls.js@latest"></script>
 </head>
 <body>
 
-<video id="video" playsinline></video>
+<video id="video" playsinline autoplay></video>
 
 <script>
   var video = document.getElementById('video');
   var hls = null;
   var sonUrl = "";
 
-  // FUNKTION: Versucht mit aller Macht abzuspielen und Lautstärke zu erzwingen
-  function startPowerPlay() {
-    video.muted = false; // Wir wollen Ton!
+  function erzwingeTonUndPlay() {
+    // Wir sagen dem Video: Sei laut!
+    video.muted = false;
     video.volume = 1.0;
 
-    var promise = video.play();
-    if (promise !== undefined) {
-      promise.catch(error => {
-        // Falls Android blockt: Starte erst stumm (Bild kommt)
-        video.muted = true;
-        video.play();
-      });
+    var playPromise = video.play();
+
+    if (playPromise !== undefined) {
+        playPromise.then(_ => {
+            console.log("Wiedergabe läuft mit Ton!");
+        }).catch(error => {
+            // Falls Android den Ton blockiert, müssen wir es 
+            // leider kurz stumm starten, damit das Bild kommt...
+            console.log("Ton blockiert, erzwinge Bild...");
+            video.muted = true;
+            video.play();
+            
+            // ...aber wir versuchen danach jede Sekunde, den Ton wieder einzuschalten!
+            var retryAudio = setInterval(() => {
+                video.muted = false;
+                video.play();
+                if (!video.muted) { 
+                    clearInterval(retryAudio); 
+                    console.log("Ton wurde nachträglich befreit!");
+                }
+            }, 1000);
+        });
     }
   }
 
-  // WACHHUND: Läuft alle 500ms
+  // WACHHUND: Prüft alle 800ms ob das Video pausiert ist oder stumm geschaltet wurde
   setInterval(function() {
-    // 1. Wenn das Video pausiert ist -> Play!
-    if (video.paused && sonUrl !== "") {
-      startPowerPlay();
+    if (sonUrl !== "") {
+      if (video.paused) {
+        console.log("Video gestoppt -> Neustart!");
+        erzwingeTonUndPlay();
+      }
+      if (video.muted) {
+        console.log("Video ist stumm -> Ton an!");
+        video.muted = false;
+      }
     }
-    // 2. Wenn das Video stumm ist -> Ton an! (Versuch)
-    if (video.muted && sonUrl !== "") {
-      video.muted = false;
-    }
-  }, 500);
+  }, 800);
 
-  // EVENT: Falls das Video stoppt, sofort wieder starten
-  video.addEventListener('pause', startPowerPlay);
-  video.addEventListener('ended', startPowerPlay);
+  // Falls der Stream zu Ende ist oder hakt -> Sofort wieder Play
+  video.addEventListener('ended', erzwingeTonUndPlay);
+  video.addEventListener('pause', erzwingeTonUndPlay);
 
   function loadStream(url) {
     if (!url) return;
@@ -56,14 +74,14 @@
       hls = new Hls();
       hls.loadSource(url);
       hls.attachMedia(video);
-      hls.on(Hls.Events.MANIFEST_PARSED, startPowerPlay);
+      hls.on(Hls.Events.MANIFEST_PARSED, erzwingeTonUndPlay);
     } else {
       video.src = url;
-      startPowerPlay();
+      erzwingeTonUndPlay();
     }
   }
 
-  // Kodular Verbindung
+  // Kodular-Briefkasten abfragen
   setInterval(function() {
     var link = window.AppInventor.getWebViewString();
     if (link && link !== sonUrl) {
@@ -72,9 +90,8 @@
     }
   }, 500);
 
-  // Einmalige Freischaltung für die gesamte Sitzung
-  // Sobald du EINE Taste drückst, darf die App danach ALLES (auch Ton)
-  document.addEventListener('keydown', function() {
+  // WICHTIG: Fernbedienungs-Taste schaltet Ton sofort frei
+  window.addEventListener('keydown', function() {
     video.muted = false;
     video.play();
   });
