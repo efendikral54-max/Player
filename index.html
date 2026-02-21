@@ -15,8 +15,8 @@
         #msg { 
             position: relative; z-index: 100; color: white; 
             font-family: sans-serif; font-size: 20px; font-weight: bold;
-            text-align: center; background: rgba(0, 0, 0, 0.7); 
-            padding: 20px; border-radius: 15px; border: 2px solid rgba(255, 255, 255, 0.2);
+            text-align: center; background: rgba(0, 0, 0, 0.8); 
+            padding: 25px; border-radius: 15px; border: 2px solid #fff;
             display: none; 
         }
     </style>
@@ -28,16 +28,11 @@
     <script>
         const video = document.getElementById('video');
         const msg = document.getElementById('msg');
-        
-        // WICHTIG: Die HLS-Variable muss hier oben stehen, 
-        // damit wir sie beim Umschalten beenden können!
         let hls = null; 
         
         function getUrl() {
             return window.AppInventor ? window.AppInventor.getWebViewString() : "";
         }
-
-        var streamUrl = getUrl();
 
         function showMessage(text) {
             msg.innerHTML = text;
@@ -48,6 +43,7 @@
             msg.style.display = 'none';
         }
 
+        // Diese Funktion wird durch Klick oder Taste aufgerufen
         function forcePlay() {
             video.muted = false;
             video.volume = 1.0;
@@ -59,81 +55,70 @@
         window.addEventListener('click', forcePlay);
 
         function initPlayer() {
+            var streamUrl = getUrl();
             if (!streamUrl) return; 
             
             showMessage("Yükleniyor...");
 
-            // Fehlerbehebung: Alten Stream zerstören, bevor der neue startet!
             if (hls) {
                 hls.destroy();
             }
 
             if (Hls.isSupported()) {
                 hls = new Hls({
-                    debug: false,
                     enableWorker: true,
-                    xhrSetup: function (xhr, url) {
-                        xhr.addEventListener('load', function() {
-                            // Ignoriert falsche Server-Antworten (wie bei .txt)
-                        });
-                    }
+                    lowLatencyMode: true
                 });
 
                 hls.loadSource(streamUrl);
                 hls.attachMedia(video);
 
                 hls.on(Hls.Events.MANIFEST_PARSED, () => {
+                    // Versuch 1: Direkt abspielen
                     let playPromise = video.play();
                     
                     if (playPromise !== undefined) {
                         playPromise.then(() => {
-                            // Video spielt ab! -> Ladebildschirm wegmachen
-                            hideMessage();
+                            // Video läuft (evtl. stumm) -> Nach 1 Sekunde prüfen ob Ton an darf
+                            setTimeout(() => {
+                                if(video.muted) {
+                                    showMessage("Ses için OK tuşuna basın");
+                                } else {
+                                    hideMessage();
+                                }
+                            }, 1000);
                         }).catch(() => {
-                            // Browser blockiert -> Auffordern, OK zu drücken
+                            // Browser blockiert komplett -> Sofort Nachricht zeigen
                             showMessage("Başlatmak için OK tuşuna basın");
                         });
                     }
+
+                    // SICHERHEITS-CHECK: Wenn nach 2 Sekunden immer noch "Yükleniyor" da steht
+                    setTimeout(() => {
+                        if (video.paused) {
+                            showMessage("Başlatmak für OK tuşuna basın");
+                        }
+                    }, 2000);
                 });
 
                 hls.on(Hls.Events.ERROR, (event, data) => {
                     if (data.fatal) {
-                        switch (data.type) {
-                            case Hls.ErrorTypes.NETWORK_ERROR:
-                                console.log("Netzwerkfehler, versuche erneut...");
-                                hls.startLoad();
-                                break;
-                            case Hls.ErrorTypes.MEDIA_ERROR:
-                                console.log("Medienfehler, versuche Wiederherstellung...");
-                                hls.recoverMediaError();
-                                break;
-                            default:
-                                showMessage("Hata: Video oynatılamadı");
-                                break;
-                        }
+                        hls.startLoad();
                     }
                 });
+
             } else if (video.canPlayType('application/vnd.apple.mpegurl')) {
                 video.src = streamUrl;
-                video.addEventListener('loadedmetadata', function() {
-                    video.play();
-                    hideMessage();
-                });
+                video.play();
             }
         }
         
-        // Erster Start
-        if (streamUrl) {
-            initPlayer();
-        }
-
-        // Loop: Prüft alle 500ms auf neue URLs aus Kodular
-        var currentUrl = streamUrl;
+        // Polling für neue URLs
+        var lastUrl = "";
         setInterval(function(){
-             var newUrl = getUrl();
-             if(newUrl && newUrl !== currentUrl) {
-                 currentUrl = newUrl;
-                 streamUrl = newUrl;
+             var currentUrl = getUrl();
+             if(currentUrl && currentUrl !== lastUrl) {
+                 lastUrl = currentUrl;
                  initPlayer();
              }
         }, 500);
