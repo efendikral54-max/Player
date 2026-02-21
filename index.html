@@ -1,100 +1,123 @@
 <!DOCTYPE html>
 <html lang="tr">
 <head>
-<meta charset="UTF-8">
-<title>TV Player Sound Force</title>
-<script src="https://cdn.jsdelivr.net/npm/hls.js@latest"></script>
-<style>
-  body { margin: 0; background: #000; overflow: hidden; height: 100vh; display: flex; align-items: center; justify-content: center; }
-  video { width: 100%; height: 100vh; object-fit: contain; }
-</style>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Universal Player</title>
+    <script src="https://cdn.jsdelivr.net/npm/hls.js@latest"></script>
+    <style>
+        body, html { 
+            margin: 0; padding: 0; width: 100%; height: 100%; 
+            background-color: #000; overflow: hidden; 
+            display: flex; justify-content: center; align-items: center;
+        }
+        video { position: absolute; width: 100%; height: 100%; object-fit: contain; z-index: 1; }
+        #msg { 
+            position: relative; z-index: 100; color: white; 
+            font-family: sans-serif; font-size: 20px; font-weight: bold;
+            text-align: center; background: rgba(0, 0, 0, 0.7); 
+            padding: 20px; border-radius: 15px; border: 2px solid rgba(255, 255, 255, 0.2);
+            display: none; /* Erst versteckt, wird bei Bedarf gezeigt */
+        }
+    </style>
 </head>
 <body>
+    <video id="video" playsinline autoplay muted></video>
+    <div id="msg">Yükleniyor...</div>
 
-<video id="video" playsinline autoplay></video>
+    <script>
+        const video = document.getElementById('video');
+        const msg = document.getElementById('msg');
+        
+        // URL aus Kodular holen
+        var streamUrl = window.AppInventor.getWebViewString();
 
-<script>
-  var video = document.getElementById('video');
-  var hls = null;
-  var sonUrl = "";
+        function showMessage(text) {
+            msg.innerHTML = text;
+            msg.style.display = 'block';
+        }
 
-  function erzwingeTonUndPlay() {
-    // Wir sagen dem Video: Sei laut!
-    video.muted = false;
-    video.volume = 1.0;
-
-    var playPromise = video.play();
-
-    if (playPromise !== undefined) {
-        playPromise.then(_ => {
-            console.log("Wiedergabe läuft mit Ton!");
-        }).catch(error => {
-            // Falls Android den Ton blockiert, müssen wir es 
-            // leider kurz stumm starten, damit das Bild kommt...
-            console.log("Ton blockiert, erzwinge Bild...");
-            video.muted = true;
+        function forcePlay() {
+            video.muted = false;
+            video.volume = 1.0;
             video.play();
+            msg.style.display = 'none';
+        }
+
+        window.addEventListener('keydown', forcePlay);
+        window.addEventListener('click', forcePlay);
+
+        function initPlayer() {
+            if (!streamUrl) {
+                // Warte noch kurz, falls Kodular langsam ist
+                return; 
+            }
             
-            // ...aber wir versuchen danach jede Sekunde, den Ton wieder einzuschalten!
-            var retryAudio = setInterval(() => {
-                video.muted = false;
-                video.play();
-                if (!video.muted) { 
-                    clearInterval(retryAudio); 
-                    console.log("Ton wurde nachträglich befreit!");
-                }
-            }, 1000);
-        });
-    }
-  }
+            showMessage("Yükleniyor...");
 
-  // WACHHUND: Prüft alle 800ms ob das Video pausiert ist oder stumm geschaltet wurde
-  setInterval(function() {
-    if (sonUrl !== "") {
-      if (video.paused) {
-        console.log("Video gestoppt -> Neustart!");
-        erzwingeTonUndPlay();
-      }
-      if (video.muted) {
-        console.log("Video ist stumm -> Ton an!");
-        video.muted = false;
-      }
-    }
-  }, 800);
+            if (Hls.isSupported()) {
+                const hls = new Hls({
+                    debug: false,
+                    enableWorker: true,
+                    // WICHTIG: Das hier erlaubt .txt Dateien!
+                    // Wir zwingen den Player, die Antwort zu akzeptieren, egal was der Server sagt.
+                    xhrSetup: function (xhr, url) {
+                        xhr.addEventListener('load', function() {
+                            // Wenn der Server sagt "Das ist Text", ignorieren wir das.
+                        });
+                    }
+                });
 
-  // Falls der Stream zu Ende ist oder hakt -> Sofort wieder Play
-  video.addEventListener('ended', erzwingeTonUndPlay);
-  video.addEventListener('pause', erzwingeTonUndPlay);
+                hls.loadSource(streamUrl);
+                hls.attachMedia(video);
 
-  function loadStream(url) {
-    if (!url) return;
-    if (hls) hls.destroy();
+                hls.on(Hls.Events.MANIFEST_PARSED, () => {
+                    video.play().catch(() => {
+                        showMessage("Başlatmak için OK tuşuna basın");
+                    });
+                });
 
-    if (Hls.isSupported()) {
-      hls = new Hls();
-      hls.loadSource(url);
-      hls.attachMedia(video);
-      hls.on(Hls.Events.MANIFEST_PARSED, erzwingeTonUndPlay);
-    } else {
-      video.src = url;
-      erzwingeTonUndPlay();
-    }
-  }
+                hls.on(Hls.Events.ERROR, (event, data) => {
+                    if (data.fatal) {
+                        switch (data.type) {
+                            case Hls.ErrorTypes.NETWORK_ERROR:
+                                console.log("Netzwerkfehler, versuche erneut...");
+                                hls.startLoad();
+                                break;
+                            case Hls.ErrorTypes.MEDIA_ERROR:
+                                console.log("Medienfehler, versuche Wiederherstellung...");
+                                hls.recoverMediaError();
+                                break;
+                            default:
+                                showMessage("Hata: Video oynatılamadı");
+                                break;
+                        }
+                    }
+                });
+            } else if (video.canPlayType('application/vnd.apple.mpegurl')) {
+                // Fallback für Geräte ohne HLS.js (selten bei Android WebViewer)
+                video.src = streamUrl;
+                video.addEventListener('loadedmetadata', function() {
+                    video.play();
+                });
+            }
+        }
+        
+        // URL Checker Loop (Polling)
+        // Prüft alle 500ms, ob eine neue URL von Kodular kam
+        var currentUrl = "";
+        setInterval(function(){
+             var newUrl = window.AppInventor.getWebViewString();
+             if(newUrl && newUrl !== currentUrl) {
+                 currentUrl = newUrl;
+                 streamUrl = newUrl;
+                 // Bei .txt Links versuchen wir manchmal einen Trick:
+                 // Manchmal hilft es, .txt durch .m3u8 zu ersetzen, falls der Server das erlaubt.
+                 // Aber wir probieren es erst einmal direkt.
+                 initPlayer();
+             }
+        }, 500);
 
-  // Kodular-Briefkasten abfragen
-  setInterval(function() {
-    var link = window.AppInventor.getWebViewString();
-    if (link && link !== sonUrl) {
-      sonUrl = link;
-      loadStream(link);
-    }
-  }, 500);
-
-  // WICHTIG: Fernbedienungs-Taste schaltet Ton sofort frei
-  window.addEventListener('keydown', function() {
-    video.muted = false;
-    video.play();
-  });
-</script>
+    </script>
 </body>
 </html>
