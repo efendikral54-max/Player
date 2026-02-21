@@ -1,68 +1,86 @@
 <!DOCTYPE html>
 <html lang="tr">
 <head>
-    <meta charset="UTF-8">
-    <title>Basit Hls.js Oynatıcı</title>
-    <script src="https://cdn.jsdelivr.net/npm/hls.js@latest"></script>
-    <style>
-        /* Macht den Player unsichtbar im Hintergrund und nutzt den ganzen Platz */
-        body, html { margin: 0; padding: 0; width: 100%; height: 100%; background-color: #000; overflow: hidden; }
-        video { width: 100%; height: 100%; object-fit: contain; }
-    </style>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Kodular HLS Player</title>
+<script src="https://cdn.jsdelivr.net/npm/hls.js@latest"></script>
+<style>
+  /* Macht den Hintergrund komplett schwarz und verhindert Scrollbalken */
+  body { margin: 0; background: #000; overflow: hidden; display: flex; align-items: center; justify-content: center; height: 100vh; }
+  /* object-fit: contain sorgt dafür, dass das Bildformat nicht verzerrt wird */
+  video { width: 100%; height: 100vh; object-fit: contain; }
+</style>
 </head>
 <body>
 
-    <video id="video" autoplay></video>
+<video id="video" autoplay muted playsinline></video>
 
-    <script>
-        var video = document.getElementById('video');
-        var hls = null;
-        var sonUrl = ""; // Merkt sich den letzten Link
+<script>
+  var video = document.getElementById('video');
+  var hls = null;
+  var sonUrl = ""; // Merkt sich den zuletzt geladenen Link
 
-        function oynat(yeniUrl) {
-            // Wenn schon ein Stream lief, stoppen wir ihn sauber
-            if (hls) {
-                hls.destroy();
-            }
+  // Diese Funktion lädt den eigentlichen Stream
+  function loadStream(streamURL) {
+    if (!streamURL) return;
 
-            if (Hls.isSupported()) {
-                hls = new Hls();
-                hls.loadSource(yeniUrl);
-                hls.attachMedia(video);
-                
-                hls.on(Hls.Events.MANIFEST_PARSED, function() {
-                    video.play(); 
-                });
-            } 
-            else if (video.canPlayType('application/vnd.apple.mpegurl')) {
-                video.src = yeniUrl;
-                video.play();
-            }
+    // Alten Stream sauber beenden, wenn umgeschaltet wird
+    if (hls) {
+      hls.destroy();
+    }
+
+    if(Hls.isSupported()) {
+      hls = new Hls({
+        enableWorker: true
+      });
+      hls.loadSource(streamURL);
+      hls.attachMedia(video);
+      
+      hls.on(Hls.Events.MANIFEST_PARSED, function() {
+        // Promise-Struktur aus deinem Code (Sehr gut für Fehlervermeidung!)
+        var playPromise = video.play();
+        if (playPromise !== undefined) {
+          playPromise.then(_ => {
+            console.log("Video başladı.");
+          })
+          .catch(error => {
+            console.log("Otomatik oynatma engellendi, kullanıcı etkileşimi bekleniyor.");
+          });
         }
+      });
+    } else if (video.canPlayType('application/vnd.apple.mpegurl')) {
+      // Fallback für native HLS-Unterstützung
+      video.src = streamURL;
+      video.addEventListener('loadedmetadata', function() {
+        video.play();
+      });
+    }
+  }
 
-        // Das ist die Schleife, die auf Kodular wartet
-        setInterval(function() {
-            var kodularUrl = window.AppInventor.getWebViewString();
-            
-            // Wenn ein Link da ist und er neu ist -> Starten!
-            if (kodularUrl && kodularUrl !== sonUrl) {
-                sonUrl = kodularUrl;
-                oynat(kodularUrl);
-            }
-        }, 500);
+  // Die Kodular-Verbindung: Prüft regelmäßig auf neue Links
+  setInterval(function() {
+    var kodularUrl = window.AppInventor.getWebViewString();
+    
+    // Wenn ein neuer Link aus der App kommt, lade ihn!
+    if (kodularUrl && kodularUrl !== sonUrl) {
+      sonUrl = kodularUrl;
+      loadStream(kodularUrl);
+    }
+  }, 500);
 
-        // WICHTIG: Sobald du mit der Fernbedienung klickst oder OK drückst,
-        // wird der Ton sofort erzwungen.
-        window.addEventListener('click', function() {
-            video.muted = false;
-            video.play();
-        });
-        window.addEventListener('keydown', function() {
-            video.muted = false;
-            video.play();
-        });
+  // Zwingt den Ton an, sobald der Nutzer eine Taste auf der Fernbedienung drückt
+  function sesiAc() {
+    if (video.muted) {
+      video.muted = false;
+      video.play();
+    }
+  }
 
-    </script>
+  window.addEventListener('click', sesiAc);
+  window.addEventListener('keydown', sesiAc);
+
+</script>
 
 </body>
 </html>
