@@ -3,84 +3,98 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Kodular HLS Player</title>
+<title>Non-Stop TV Player</title>
 <script src="https://cdn.jsdelivr.net/npm/hls.js@latest"></script>
 <style>
-  /* Macht den Hintergrund komplett schwarz und verhindert Scrollbalken */
   body { margin: 0; background: #000; overflow: hidden; display: flex; align-items: center; justify-content: center; height: 100vh; }
-  /* object-fit: contain sorgt dafür, dass das Bildformat nicht verzerrt wird */
   video { width: 100%; height: 100vh; object-fit: contain; }
 </style>
 </head>
 <body>
 
-<video id="video" autoplay muted playsinline></video>
+<video id="video" playsinline></video>
 
 <script>
   var video = document.getElementById('video');
   var hls = null;
-  var sonUrl = ""; // Merkt sich den zuletzt geladenen Link
+  var sonUrl = "";
+  var isAttemptingPlay = false;
 
-  // Diese Funktion lädt den eigentlichen Stream
-  function loadStream(streamURL) {
-    if (!streamURL) return;
+  // Die Hauptfunktion zum Abspielen
+  function forcePlay() {
+    if (isAttemptingPlay) return; // Verhindert Endlosschleifen-Fehler
+    isAttemptingPlay = true;
 
-    // Alten Stream sauber beenden, wenn umgeschaltet wird
-    if (hls) {
-      hls.destroy();
-    }
+    // Versuche mit Ton zu starten
+    video.muted = false;
+    video.volume = 1.0;
 
-    if(Hls.isSupported()) {
-      hls = new Hls({
-        enableWorker: true
-      });
-      hls.loadSource(streamURL);
-      hls.attachMedia(video);
-      
-      hls.on(Hls.Events.MANIFEST_PARSED, function() {
-        // Promise-Struktur aus deinem Code (Sehr gut für Fehlervermeidung!)
-        var playPromise = video.play();
-        if (playPromise !== undefined) {
-          playPromise.then(_ => {
-            console.log("Video başladı.");
-          })
-          .catch(error => {
-            console.log("Otomatik oynatma engellendi, kullanıcı etkileşimi bekleniyor.");
-          });
-        }
-      });
-    } else if (video.canPlayType('application/vnd.apple.mpegurl')) {
-      // Fallback für native HLS-Unterstützung
-      video.src = streamURL;
-      video.addEventListener('loadedmetadata', function() {
+    var playPromise = video.play();
+
+    if (playPromise !== undefined) {
+      playPromise.then(_ => {
+        isAttemptingPlay = false;
+        console.log("Wiedergabe läuft mit Ton");
+      })
+      .catch(error => {
+        // Wenn der Browser blockiert (wegen Ton), starte stumm und versuche es gleich wieder
+        console.log("Autoplay blockiert, starte stumm...");
+        video.muted = true;
         video.play();
+        isAttemptingPlay = false;
       });
+    } else {
+      isAttemptingPlay = false;
     }
   }
 
-  // Die Kodular-Verbindung: Prüft regelmäßig auf neue Links
+  // EVENT: Wenn das Video pausiert wird (warum auch immer), sofort wieder starten
+  video.addEventListener('pause', function() {
+    console.log("Pause erkannt! Erzwinge Fortsetzung...");
+    forcePlay();
+  });
+
+  // WACHHUND: Alle 1 Sekunde prüfen, ob das Video feststeckt
+  setInterval(function() {
+    if (video.paused && sonUrl !== "") {
+      forcePlay();
+    }
+  }, 1000);
+
+  function loadStream(streamURL) {
+    if (!streamURL) return;
+    if (hls) { hls.destroy(); }
+
+    if(Hls.isSupported()) {
+      hls = new Hls({ enableWorker: true });
+      hls.loadSource(streamURL);
+      hls.attachMedia(video);
+      hls.on(Hls.Events.MANIFEST_PARSED, function() {
+        forcePlay();
+      });
+    } else if (video.canPlayType('application/vnd.apple.mpegurl')) {
+      video.src = streamURL;
+      forcePlay();
+    }
+  }
+
+  // Kodular-Abfrage
   setInterval(function() {
     var kodularUrl = window.AppInventor.getWebViewString();
-    
-    // Wenn ein neuer Link aus der App kommt, lade ihn!
     if (kodularUrl && kodularUrl !== sonUrl) {
       sonUrl = kodularUrl;
       loadStream(kodularUrl);
     }
   }, 500);
 
-  // Zwingt den Ton an, sobald der Nutzer eine Taste auf der Fernbedienung drückt
-  function sesiAc() {
-    if (video.muted) {
-      video.muted = false;
-      video.play();
-    }
+  // Einmaliger Klick schaltet für immer den Ton frei (Browser-Sicherheit)
+  function freischalten() {
+    video.muted = false;
+    forcePlay();
   }
-
-  window.addEventListener('click', sesiAc);
-  window.addEventListener('keydown', sesiAc);
+  window.addEventListener('click', freischalten);
+  window.addEventListener('keydown', freischalten);
 
 </script>
-
 </body>
 </html>
