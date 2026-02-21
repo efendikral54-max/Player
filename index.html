@@ -2,13 +2,11 @@
 <html lang="tr">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Non-Stop TV Player</title>
-<script src="https://cdn.jsdelivr.net/npm/hls.js@latest"></script>
 <style>
-  body { margin: 0; background: #000; overflow: hidden; display: flex; align-items: center; justify-content: center; height: 100vh; }
+  body { margin: 0; background: #000; overflow: hidden; height: 100vh; }
   video { width: 100%; height: 100vh; object-fit: contain; }
 </style>
+<script src="https://cdn.jsdelivr.net/npm/hls.js@latest"></script>
 </head>
 <body>
 
@@ -18,83 +16,68 @@
   var video = document.getElementById('video');
   var hls = null;
   var sonUrl = "";
-  var isAttemptingPlay = false;
 
-  // Die Hauptfunktion zum Abspielen
-  function forcePlay() {
-    if (isAttemptingPlay) return; // Verhindert Endlosschleifen-Fehler
-    isAttemptingPlay = true;
-
-    // Versuche mit Ton zu starten
-    video.muted = false;
+  // FUNKTION: Versucht mit aller Macht abzuspielen und Lautstärke zu erzwingen
+  function startPowerPlay() {
+    video.muted = false; // Wir wollen Ton!
     video.volume = 1.0;
 
-    var playPromise = video.play();
-
-    if (playPromise !== undefined) {
-      playPromise.then(_ => {
-        isAttemptingPlay = false;
-        console.log("Wiedergabe läuft mit Ton");
-      })
-      .catch(error => {
-        // Wenn der Browser blockiert (wegen Ton), starte stumm und versuche es gleich wieder
-        console.log("Autoplay blockiert, starte stumm...");
+    var promise = video.play();
+    if (promise !== undefined) {
+      promise.catch(error => {
+        // Falls Android blockt: Starte erst stumm (Bild kommt)
         video.muted = true;
         video.play();
-        isAttemptingPlay = false;
       });
-    } else {
-      isAttemptingPlay = false;
     }
   }
 
-  // EVENT: Wenn das Video pausiert wird (warum auch immer), sofort wieder starten
-  video.addEventListener('pause', function() {
-    console.log("Pause erkannt! Erzwinge Fortsetzung...");
-    forcePlay();
-  });
-
-  // WACHHUND: Alle 1 Sekunde prüfen, ob das Video feststeckt
+  // WACHHUND: Läuft alle 500ms
   setInterval(function() {
+    // 1. Wenn das Video pausiert ist -> Play!
     if (video.paused && sonUrl !== "") {
-      forcePlay();
+      startPowerPlay();
     }
-  }, 1000);
-
-  function loadStream(streamURL) {
-    if (!streamURL) return;
-    if (hls) { hls.destroy(); }
-
-    if(Hls.isSupported()) {
-      hls = new Hls({ enableWorker: true });
-      hls.loadSource(streamURL);
-      hls.attachMedia(video);
-      hls.on(Hls.Events.MANIFEST_PARSED, function() {
-        forcePlay();
-      });
-    } else if (video.canPlayType('application/vnd.apple.mpegurl')) {
-      video.src = streamURL;
-      forcePlay();
-    }
-  }
-
-  // Kodular-Abfrage
-  setInterval(function() {
-    var kodularUrl = window.AppInventor.getWebViewString();
-    if (kodularUrl && kodularUrl !== sonUrl) {
-      sonUrl = kodularUrl;
-      loadStream(kodularUrl);
+    // 2. Wenn das Video stumm ist -> Ton an! (Versuch)
+    if (video.muted && sonUrl !== "") {
+      video.muted = false;
     }
   }, 500);
 
-  // Einmaliger Klick schaltet für immer den Ton frei (Browser-Sicherheit)
-  function freischalten() {
-    video.muted = false;
-    forcePlay();
-  }
-  window.addEventListener('click', freischalten);
-  window.addEventListener('keydown', freischalten);
+  // EVENT: Falls das Video stoppt, sofort wieder starten
+  video.addEventListener('pause', startPowerPlay);
+  video.addEventListener('ended', startPowerPlay);
 
+  function loadStream(url) {
+    if (!url) return;
+    if (hls) hls.destroy();
+
+    if (Hls.isSupported()) {
+      hls = new Hls();
+      hls.loadSource(url);
+      hls.attachMedia(video);
+      hls.on(Hls.Events.MANIFEST_PARSED, startPowerPlay);
+    } else {
+      video.src = url;
+      startPowerPlay();
+    }
+  }
+
+  // Kodular Verbindung
+  setInterval(function() {
+    var link = window.AppInventor.getWebViewString();
+    if (link && link !== sonUrl) {
+      sonUrl = link;
+      loadStream(link);
+    }
+  }, 500);
+
+  // Einmalige Freischaltung für die gesamte Sitzung
+  // Sobald du EINE Taste drückst, darf die App danach ALLES (auch Ton)
+  document.addEventListener('keydown', function() {
+    video.muted = false;
+    video.play();
+  });
 </script>
 </body>
 </html>
