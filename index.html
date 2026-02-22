@@ -2,79 +2,74 @@
 <html lang="tr">
 <head>
     <meta charset="UTF-8">
-    <title>Smart TV Player</title>
     <script src="https://cdn.jsdelivr.net/npm/hls.js@latest"></script>
     <style>
-        body, html { margin: 0; padding: 0; width: 100%; height: 100%; background-color: #000; overflow: hidden; }
+        body, html { margin: 0; padding: 0; width: 100%; height: 100%; background: #000; overflow: hidden; }
         video { width: 100%; height: 100%; object-fit: contain; }
     </style>
 </head>
 <body>
-    <video id="video" autoplay></video>
-
+    <video id="video" autoplay playsinline></video>
     <script>
         const video = document.getElementById('video');
         let hls = null;
         let playlist = [];
         let currentIndex = 0;
 
-        // 1. Funktion zum Abspielen eines Senders
-        function playStream(url) {
+        function play(url) {
             if (!url) return;
             if (hls) hls.destroy();
-
             if (Hls.isSupported()) {
                 hls = new Hls();
                 hls.loadSource(url);
                 hls.attachMedia(video);
                 hls.on(Hls.Events.MANIFEST_PARSED, () => video.play());
-            } else if (video.canPlayType('application/vnd.apple.mpegurl')) {
+            } else {
                 video.src = url;
                 video.play();
             }
         }
 
-        // 2. Tasten-Steuerung (Zapping)
-        window.addEventListener('keydown', (e) => {
-            // Unmute-Sicherheit bei jeder Taste
-            video.muted = false;
+        // Hilfsfunktion: M3U im Hintergrund laden und parsen
+        async function loadPlaylist(m3uUrl, currentUrl) {
+            try {
+                const response = await fetch(m3uUrl);
+                const text = await response.text();
+                // Einfaches Extrahieren aller http Links aus der M3U
+                playlist = text.split('\n').filter(line => line.startsWith('http')).map(line => line.trim());
+                // Finden, wo wir gerade sind
+                currentIndex = playlist.indexOf(currentUrl);
+                if (currentIndex === -1) currentIndex = 0;
+            } catch (e) { console.error("M3U konnte nicht geladen werden"); }
+        }
 
+        window.addEventListener('keydown', (e) => {
+            video.muted = false;
             if (playlist.length > 0) {
-                if (e.keyCode === 22 || e.keyCode === 39) { // Rechts
+                if (e.keyCode === 22) { // Rechts
                     currentIndex = (currentIndex + 1) % playlist.length;
-                    playStream(playlist[currentIndex]);
-                } 
-                else if (e.keyCode === 21 || e.keyCode === 37) { // Links
+                    play(playlist[currentIndex]);
+                } else if (e.keyCode === 21) { // Links
                     currentIndex = (currentIndex - 1 + playlist.length) % playlist.length;
-                    playStream(playlist[currentIndex]);
+                    play(playlist[currentIndex]);
                 }
             }
         });
 
-        // 3. Kodular-Briefkasten prüfen
         setInterval(() => {
             let data = window.AppInventor.getWebViewString();
             if (data && data !== "") {
-                // Wenn die Daten ein "|" enthalten, ist es die ganze Liste
+                // Format: "AKTUELLER_LINK|M3U_URL"
                 if (data.includes("|")) {
-                    let newList = data.split("|");
-                    // Nur updaten, wenn die Liste sich wirklich geändert hat
-                    if (JSON.stringify(newList) !== JSON.stringify(playlist)) {
-                        playlist = newList;
-                        currentIndex = 0; // Starte beim ersten Sender der Liste
-                        playStream(playlist[currentIndex]);
-                    }
+                    let parts = data.split("|");
+                    let current = parts[0];
+                    let m3u = parts[1];
+                    play(current);
+                    loadPlaylist(m3u, current);
                 } else {
-                    // Es ist nur ein einzelner Link (vom Menü-Klick)
-                    if (data !== playlist[currentIndex]) {
-                        playStream(data);
-                        // Versuche den Index in der Liste zu finden, damit Zappen danach klappt
-                        let foundIndex = playlist.indexOf(data);
-                        if (foundIndex !== -1) currentIndex = foundIndex;
-                    }
+                    play(data);
                 }
-                // String leeren, damit wir nicht endlos triggern (optional)
-                // window.AppInventor.setWebViewString(""); 
+                window.AppInventor.setWebViewString("");
             }
         }, 500);
     </script>
