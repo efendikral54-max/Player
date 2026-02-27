@@ -12,18 +12,20 @@
             background-color: #000; overflow: hidden; 
             display: flex; justify-content: center; align-items: center;
         }
-        video, iframe { position: absolute; width: 100%; height: 100%; border: none; z-index: 1; }
+        /* Video und Iframe liegen übereinander */
+        video, iframe { position: absolute; width: 100%; height: 100%; border: none; z-index: 1; object-fit: contain; }
         #msg { 
             position: relative; z-index: 100; color: white; 
-            font-family: sans-serif; font-size: 18px; text-align: center; 
-            background: rgba(0, 0, 0, 0.7); padding: 15px; border-radius: 10px;
+            font-family: sans-serif; font-size: 22px; font-weight: bold;
+            text-align: center; background: rgba(0, 0, 0, 0.7); 
+            padding: 25px; border-radius: 15px; border: 2px solid rgba(255, 255, 255, 0.2);
         }
     </style>
 </head>
 <body>
     <video id="video" playsinline autoplay muted style="display:none;"></video>
     <iframe id="webFrame" style="display:none;" allowfullscreen></iframe>
-    <div id="msg">Lade Stream...</div>
+    <div id="msg">Yükleniyor...</div>
 
     <script>
         const video = document.getElementById('video');
@@ -31,54 +33,97 @@
         const msg = document.getElementById('msg');
         let hlsPlayer = null;
         let tsPlayer = null;
+        let hasInteracted = false; 
+
+        function getUrl() {
+            return window.AppInventor.getWebViewString();
+        }
+
+        function forcePlay() {
+            hasInteracted = true; 
+            video.muted = false;
+            video.volume = 1.0;
+            video.play();
+            msg.style.display = 'none';
+        }
+
+        window.addEventListener('keydown', forcePlay);
+        window.addEventListener('click', forcePlay);
+
+        function stopExistingPlayers() {
+            if (hlsPlayer) {
+                hlsPlayer.destroy();
+                hlsPlayer = null;
+            }
+            if (tsPlayer) {
+                tsPlayer.unload();
+                tsPlayer.detachMediaElement();
+                tsPlayer.destroy();
+                tsPlayer = null;
+            }
+            video.src = "";
+            video.style.display = "none";
+            // Web-Frame zurücksetzen
+            webFrame.src = "";
+            webFrame.style.display = "none";
+        }
 
         function startStream(url) {
             if (!url) return;
-            
-            // Player zurücksetzen
-            if (hlsPlayer) hlsPlayer.destroy();
-            if (tsPlayer) { tsPlayer.unload(); tsPlayer.destroy(); }
-            video.src = "";
-            video.style.display = "none";
-            webFrame.style.display = "none";
-            webFrame.src = "";
+            stopExistingPlayers();
 
             const lowUrl = url.toLowerCase();
             const isTS = lowUrl.includes('.ts') || lowUrl.includes('type=m3u_plus');
             const isM3U8 = lowUrl.includes('.m3u8');
-            const isDirectVideo = lowUrl.includes('.mp4') || lowUrl.includes('.mkv') || lowUrl.includes('.webm');
+            const isDirectVideo = lowUrl.includes('.mp4') || lowUrl.includes('.mkv');
 
             if (isTS || isM3U8 || isDirectVideo) {
-                // ECHTER STREAM MODUS
+                // IPTV / VIDEO MODUS
                 video.style.display = "block";
                 if (isTS && mpegts.getFeatureList().mseLivePlayback) {
                     tsPlayer = mpegts.createPlayer({ type: 'mse', isLive: true, url: url });
                     tsPlayer.attachMediaElement(video);
                     tsPlayer.load();
-                    video.play();
-                } else if (isM3U8 && Hls.isSupported()) {
-                    hlsPlayer = new Hls();
+                    handlePlayback();
+                } 
+                else if (isM3U8 && Hls.isSupported()) {
+                    hlsPlayer = new Hls({ xhrSetup: function (xhr) { xhr.withCredentials = false; } });
                     hlsPlayer.loadSource(url);
                     hlsPlayer.attachMedia(video);
-                } else {
+                    hlsPlayer.on(Hls.Events.MANIFEST_PARSED, () => handlePlayback());
+                } 
+                else {
                     video.src = url;
-                    video.play();
+                    handlePlayback();
                 }
-                msg.style.display = "none";
             } else {
-                // WEB-LINK MODUS (z.B. Vidmody, YouTube Embed)
+                // WEB-LINK MODUS (z.B. Vidmody)
                 msg.style.display = "none";
                 webFrame.style.display = "block";
                 webFrame.src = url;
             }
         }
 
-        // Kodular Kommunikation
+        function handlePlayback() {
+            if (hasInteracted) {
+                video.muted = false;
+                video.play();
+                msg.style.display = 'none';
+            } else {
+                video.play();
+                msg.innerHTML = "Ses için OK tuşuna bas";
+                msg.style.display = 'block';
+            }
+        }
+
+        let currentUrl = getUrl();
+        if (currentUrl) startStream(currentUrl);
+
         setInterval(() => {
-            let url = window.AppInventor.getWebViewString();
-            if (url && url !== window.currentUrl) {
-                window.currentUrl = url;
-                startStream(url);
+            let newUrl = getUrl();
+            if (newUrl && newUrl !== currentUrl) {
+                currentUrl = newUrl;
+                startStream(newUrl);
             }
         }, 500);
     </script>
