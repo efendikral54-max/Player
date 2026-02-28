@@ -19,18 +19,25 @@
             text-align: center; background: rgba(0, 0, 0, 0.7); 
             padding: 25px; border-radius: 15px; border: 2px solid rgba(255, 255, 255, 0.2);
         }
+        #err { position: fixed; bottom: 10px; color: red; font-size: 12px; z-index: 1000; background: rgba(0,0,0,0.5); }
     </style>
 </head>
 <body>
     <video id="video" playsinline autoplay muted></video>
     <div id="msg">Yükleniyor...</div>
+    <div id="err"></div>
 
     <script>
         const video = document.getElementById('video');
         const msg = document.getElementById('msg');
+        const err = document.getElementById('err');
         let hlsPlayer = null;
         let tsPlayer = null;
         let hasInteracted = false; 
+
+        video.onerror = function() {
+            if(video.src) err.innerHTML = "Video Error: " + (video.error ? video.error.code : "Unknown");
+        };
 
         function getUrl() {
             return window.AppInventor.getWebViewString();
@@ -38,9 +45,10 @@
 
         function forcePlay() {
             hasInteracted = true; 
+            err.innerHTML = "";
             video.muted = false;
             video.volume = 1.0;
-            video.play();
+            video.play().catch(e => { err.innerHTML = "Play Error: " + e.message; });
             msg.style.display = 'none';
         }
 
@@ -48,29 +56,22 @@
         window.addEventListener('click', forcePlay);
 
         function stopExistingPlayers() {
-            if (hlsPlayer) {
-                hlsPlayer.destroy();
-                hlsPlayer = null;
-            }
-            if (tsPlayer) {
-                tsPlayer.unload();
-                tsPlayer.detachMediaElement();
-                tsPlayer.destroy();
-                tsPlayer = null;
-            }
-            video.src = "";
+            if (hlsPlayer) { hlsPlayer.destroy(); hlsPlayer = null; }
+            if (tsPlayer) { tsPlayer.unload(); tsPlayer.detachMediaElement(); tsPlayer.destroy(); tsPlayer = null; }
+            video.removeAttribute('src');
+            video.load();
         }
 
         function startStream(url) {
             if (!url) return;
             stopExistingPlayers();
+            err.innerHTML = "";
 
             const urlLower = url.toLowerCase();
             const isTS = urlLower.includes('.ts') || urlLower.includes('type=m3u_plus');
-            const isM3U8 = urlLower.includes('.m3u8');
             
-            // HIER DIE ERWEITERUNG: workers.dev UND goldvod.site werden direkt abgespielt
-            const needsNative = urlLower.includes('workers.dev') || urlLower.includes('goldvod.site'); 
+            // Goldvod und Workers erzwingen den nativen Player, da hls.js oft geblockt wird
+            const forceNative = urlLower.includes('goldvod') || urlLower.includes('workers.dev');
 
             if (isTS && mpegts.getFeatureList().mseLivePlayback) {
                 tsPlayer = mpegts.createPlayer({ type: 'mse', isLive: true, url: url });
@@ -78,14 +79,12 @@
                 tsPlayer.load();
                 handlePlayback();
             } 
-            else if (!needsNative && Hls.isSupported()) {
-                // HLS Modus für normale m3u8 Links
+            else if (!forceNative && Hls.isSupported()) {
                 hlsPlayer = new Hls({ xhrSetup: function (xhr) { xhr.withCredentials = false; } });
                 hlsPlayer.loadSource(url);
                 hlsPlayer.attachMedia(video);
                 hlsPlayer.on(Hls.Events.MANIFEST_PARSED, () => handlePlayback());
-                
-                hlsPlayer.on(Hls.Events.ERROR, function (event, data) {
+                hlsPlayer.on(Hls.Events.ERROR, (e, data) => {
                     if (data.fatal) {
                         hlsPlayer.destroy();
                         video.src = url;
@@ -94,8 +93,8 @@
                 });
             } 
             else {
-                // Native Unterstützung (greift jetzt auch bei goldvod.site)
                 video.src = url;
+                video.load();
                 handlePlayback();
             }
         }
@@ -103,10 +102,10 @@
         function handlePlayback() {
             if (hasInteracted) {
                 video.muted = false;
-                video.play();
+                video.play().catch(e => { err.innerHTML = "Error: " + e.message; });
                 msg.style.display = 'none';
             } else {
-                video.play();
+                video.play().catch(() => {}); // Autoplay-Versuch
                 msg.innerHTML = "Ses için OK tuşuna bas";
                 msg.style.display = 'block';
             }
