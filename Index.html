@@ -4,8 +4,8 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Universal IPTV Player</title>
-    <script src="[https://cdn.jsdelivr.net/npm/hls.js@latest](https://cdn.jsdelivr.net/npm/hls.js@latest)"></script>
-    <script src="[https://cdn.jsdelivr.net/npm/mpegts.js@latest/dist/mpegts.min.js](https://cdn.jsdelivr.net/npm/mpegts.js@latest/dist/mpegts.min.js)"></script>
+    <script src="https://cdn.jsdelivr.net/npm/hls.js@latest"></script>
+    <script src="https://cdn.jsdelivr.net/npm/mpegts.js@latest/dist/mpegts.min.js"></script>
     <style>
         body, html { 
             margin: 0; padding: 0; width: 100%; height: 100%; 
@@ -65,28 +65,23 @@
             if (!url) return;
             stopExistingPlayers();
 
-            // Erkennung basierend auf der Dateiendung
-            const isTS = url.toLowerCase().includes('.ts') || url.toLowerCase().includes('type=m3u_plus');
-            const isM3U8 = url.toLowerCase().includes('.m3u8');
-            
-            // NEU HINZUGEFÜGT: Erkennt Cloudflare Worker Links wie deinen StarTV Link
-            const isWorker = url.toLowerCase().includes('workers.dev'); 
+            const urlLower = url.toLowerCase();
+            const isTS = urlLower.includes('.ts') || urlLower.includes('type=m3u_plus');
+            const isM3U8 = urlLower.includes('.m3u8');
+            const isWorker = urlLower.includes('workers.dev'); 
 
             if (isTS && mpegts.getFeatureList().mseLivePlayback) {
-                // MPEG-TS Modus (.ts)
                 tsPlayer = mpegts.createPlayer({ type: 'mse', isLive: true, url: url });
                 tsPlayer.attachMediaElement(video);
                 tsPlayer.load();
                 handlePlayback();
             } 
             else if (!isWorker && Hls.isSupported()) {
-                // HLS Modus (.m3u8) - Wird bei Worker-Links übersprungen!
                 hlsPlayer = new Hls({ xhrSetup: function (xhr) { xhr.withCredentials = false; } });
                 hlsPlayer.loadSource(url);
                 hlsPlayer.attachMedia(video);
                 hlsPlayer.on(Hls.Events.MANIFEST_PARSED, () => handlePlayback());
                 
-                // NEU HINZUGEFÜGT: Sicherheitsnetz, falls hls.js blockiert wird
                 hlsPlayer.on(Hls.Events.ERROR, function (event, data) {
                     if (data.fatal) {
                         hlsPlayer.destroy();
@@ -95,13 +90,8 @@
                     }
                 });
             } 
-            else if (video.canPlayType('application/vnd.apple.mpegurl') || isWorker) {
-                // Native Unterstützung ODER Worker-Link (Das löst dein Problem!)
-                video.src = url;
-                handlePlayback();
-            }
             else {
-                // Letzte Rettung für unbekannte Formate
+                // Das hier greift bei Workers-Links und als Backup
                 video.src = url;
                 handlePlayback();
             }
@@ -119,7 +109,6 @@
             }
         }
 
-        // Intervall-Prüfung für neue URLs aus Kodular
         let currentUrl = getUrl();
         if (currentUrl) startStream(currentUrl);
 
