@@ -1,13 +1,76 @@
-function startStream(url) {
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Universal IPTV Player</title>
+    <script src="[https://cdn.jsdelivr.net/npm/hls.js@latest](https://cdn.jsdelivr.net/npm/hls.js@latest)"></script>
+    <script src="[https://cdn.jsdelivr.net/npm/mpegts.js@latest/dist/mpegts.min.js](https://cdn.jsdelivr.net/npm/mpegts.js@latest/dist/mpegts.min.js)"></script>
+    <style>
+        body, html { 
+            margin: 0; padding: 0; width: 100%; height: 100%; 
+            background-color: #000; overflow: hidden; 
+            display: flex; justify-content: center; align-items: center;
+        }
+        video { position: absolute; width: 100%; height: 100%; object-fit: contain; z-index: 1; }
+        #msg { 
+            position: relative; z-index: 100; color: white; 
+            font-family: sans-serif; font-size: 22px; font-weight: bold;
+            text-align: center; background: rgba(0, 0, 0, 0.7); 
+            padding: 25px; border-radius: 15px; border: 2px solid rgba(255, 255, 255, 0.2);
+        }
+    </style>
+</head>
+<body>
+    <video id="video" playsinline autoplay muted></video>
+    <div id="msg">Yükleniyor...</div>
+
+    <script>
+        const video = document.getElementById('video');
+        const msg = document.getElementById('msg');
+        let hlsPlayer = null;
+        let tsPlayer = null;
+        let hasInteracted = false; 
+
+        function getUrl() {
+            return window.AppInventor.getWebViewString();
+        }
+
+        function forcePlay() {
+            hasInteracted = true; 
+            video.muted = false;
+            video.volume = 1.0;
+            video.play();
+            msg.style.display = 'none';
+        }
+
+        window.addEventListener('keydown', forcePlay);
+        window.addEventListener('click', forcePlay);
+
+        function stopExistingPlayers() {
+            if (hlsPlayer) {
+                hlsPlayer.destroy();
+                hlsPlayer = null;
+            }
+            if (tsPlayer) {
+                tsPlayer.unload();
+                tsPlayer.detachMediaElement();
+                tsPlayer.destroy();
+                tsPlayer = null;
+            }
+            video.src = "";
+        }
+
+        function startStream(url) {
             if (!url) return;
             stopExistingPlayers();
 
-            // Alles in Kleinbuchstaben für leichtere Suche
-            const urlLower = url.toLowerCase();
-            const isTS = urlLower.includes('.ts') || urlLower.includes('type=m3u_plus');
-            const isM3U8 = urlLower.includes('.m3u8');
-            // Wenn der Link keine Standard-Endung hat (wie dein StarTV Link)
-            const isSpecialApiLink = !isTS && !isM3U8;
+            // Erkennung basierend auf der Dateiendung
+            const isTS = url.toLowerCase().includes('.ts') || url.toLowerCase().includes('type=m3u_plus');
+            const isM3U8 = url.toLowerCase().includes('.m3u8');
+            
+            // NEU HINZUGEFÜGT: Erkennt Cloudflare Worker Links wie deinen StarTV Link
+            const isWorker = url.toLowerCase().includes('workers.dev'); 
 
             if (isTS && mpegts.getFeatureList().mseLivePlayback) {
                 // MPEG-TS Modus (.ts)
@@ -16,14 +79,14 @@ function startStream(url) {
                 tsPlayer.load();
                 handlePlayback();
             } 
-            else if (isM3U8 && Hls.isSupported()) {
-                // HLS Modus (.m3u8)
+            else if (!isWorker && Hls.isSupported()) {
+                // HLS Modus (.m3u8) - Wird bei Worker-Links übersprungen!
                 hlsPlayer = new Hls({ xhrSetup: function (xhr) { xhr.withCredentials = false; } });
                 hlsPlayer.loadSource(url);
                 hlsPlayer.attachMedia(video);
                 hlsPlayer.on(Hls.Events.MANIFEST_PARSED, () => handlePlayback());
                 
-                // NEU: Wenn hls.js wegen CORS-Fehlern abstürzt, weichen wir auf den nativen Player aus!
+                // NEU HINZUGEFÜGT: Sicherheitsnetz, falls hls.js blockiert wird
                 hlsPlayer.on(Hls.Events.ERROR, function (event, data) {
                     if (data.fatal) {
                         hlsPlayer.destroy();
@@ -32,10 +95,41 @@ function startStream(url) {
                     }
                 });
             } 
+            else if (video.canPlayType('application/vnd.apple.mpegurl') || isWorker) {
+                // Native Unterstützung ODER Worker-Link (Das löst dein Problem!)
+                video.src = url;
+                handlePlayback();
+            }
             else {
-                // API-Links, Workers und native Streams (umgeht CORS-Probleme!)
-                // Das greift bei: http://tv.glturk.workers.dev/?ID=StarTV_HD
+                // Letzte Rettung für unbekannte Formate
                 video.src = url;
                 handlePlayback();
             }
         }
+
+        function handlePlayback() {
+            if (hasInteracted) {
+                video.muted = false;
+                video.play();
+                msg.style.display = 'none';
+            } else {
+                video.play();
+                msg.innerHTML = "Ses için OK tuşuna bas";
+                msg.style.display = 'block';
+            }
+        }
+
+        // Intervall-Prüfung für neue URLs aus Kodular
+        let currentUrl = getUrl();
+        if (currentUrl) startStream(currentUrl);
+
+        setInterval(() => {
+            let newUrl = getUrl();
+            if (newUrl && newUrl !== currentUrl) {
+                currentUrl = newUrl;
+                startStream(newUrl);
+            }
+        }, 500);
+    </script>
+</body>
+</html>
