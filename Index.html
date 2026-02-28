@@ -1,17 +1,24 @@
 <!DOCTYPE html>
 <html>
 <head>
+    <title>URL Resolver</title>
     <script>
-        async function holeListe(url) {
-            try {
-                const response = await fetch(url);
-                const data = await response.text();
-                // Schickt die fertige Liste an Kodular zurück
-                window.AppInventor.setWebViewString(data);
-            } catch (error) {
-                window.AppInventor.setWebViewString("FEHLER");
-            }
+        // Diese Funktion wird von Kodular aufgerufen
+        function resolve(shortUrl) {
+            // Wir nutzen einen kostenlosen Proxy, um die CORS-Sperre zu umgehen
+            var proxy = "https://api.allorigins.win/get?url=" + encodeURIComponent(shortUrl);
+            
+            fetch(proxy)
+                .then(response => response.json())
+                .then(data => {
+                    // Die echte URL steckt in 'data.status.url'
+                    var longUrl = data.status.url;
+                    // Wir schicken die lange URL zurück an die App
+                    window.AppInventor.setWebViewString(longUrl);
+                })
+                .catch(err => window.AppInventor.setWebViewString("error"));
         }
     </script>
 </head>
+<body></body>
 </html>
