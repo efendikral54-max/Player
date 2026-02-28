@@ -7,120 +7,105 @@
     <script src="https://cdn.jsdelivr.net/npm/hls.js@latest"></script>
     <script src="https://cdn.jsdelivr.net/npm/mpegts.js@latest/dist/mpegts.min.js"></script>
     <style>
-        body, html { 
-            margin: 0; padding: 0; width: 100%; height: 100%; 
-            background-color: #000; overflow: hidden; 
-            display: flex; justify-content: center; align-items: center;
-        }
+        body, html { margin: 0; padding: 0; width: 100%; height: 100%; background-color: #000; overflow: hidden; display: flex; justify-content: center; align-items: center; }
         video { position: absolute; width: 100%; height: 100%; object-fit: contain; z-index: 1; }
-        #msg { 
-            position: relative; z-index: 100; color: white; 
-            font-family: sans-serif; font-size: 22px; font-weight: bold;
-            text-align: center; background: rgba(0, 0, 0, 0.7); 
-            padding: 25px; border-radius: 15px; border: 2px solid rgba(255, 255, 255, 0.2);
-        }
-        #err { position: fixed; bottom: 10px; color: red; font-size: 12px; z-index: 1000; background: rgba(0,0,0,0.5); }
+        #msg { position: relative; z-index: 100; color: white; font-family: sans-serif; font-size: 20px; font-weight: bold; text-align: center; background: rgba(0, 0, 0, 0.8); padding: 20px; border-radius: 10px; border: 1px solid #fff; }
+        #debug { position: fixed; top: 10px; left: 10px; color: #0f0; font-family: monospace; font-size: 10px; z-index: 1000; pointer-events: none; }
     </style>
 </head>
 <body>
-    <video id="video" playsinline autoplay muted></video>
+    <video id="video" playsinline autoplay></video>
     <div id="msg">Yükleniyor...</div>
-    <div id="err"></div>
+    <div id="debug"></div>
 
     <script>
         const video = document.getElementById('video');
         const msg = document.getElementById('msg');
-        const err = document.getElementById('err');
+        const debug = document.getElementById('debug');
         let hlsPlayer = null;
         let tsPlayer = null;
-        let hasInteracted = false; 
+        let hasInteracted = false;
 
-        video.onerror = function() {
-            if(video.src) err.innerHTML = "Video Error: " + (video.error ? video.error.code : "Unknown");
-        };
-
-        function getUrl() {
-            return window.AppInventor.getWebViewString();
-        }
-
-        function forcePlay() {
-            hasInteracted = true; 
-            err.innerHTML = "";
-            video.muted = false;
-            video.volume = 1.0;
-            video.play().catch(e => { err.innerHTML = "Play Error: " + e.message; });
-            msg.style.display = 'none';
-        }
-
-        window.addEventListener('keydown', forcePlay);
-        window.addEventListener('click', forcePlay);
-
-        function stopExistingPlayers() {
-            if (hlsPlayer) { hlsPlayer.destroy(); hlsPlayer = null; }
-            if (tsPlayer) { tsPlayer.unload(); tsPlayer.detachMediaElement(); tsPlayer.destroy(); tsPlayer = null; }
-            video.removeAttribute('src');
-            video.load();
-        }
+        function log(m) { debug.innerHTML += m + "<br>"; }
 
         function startStream(url) {
             if (!url) return;
-            stopExistingPlayers();
-            err.innerHTML = "";
+            log("Loading: " + url.substring(0, 40) + "...");
+            
+            if (hlsPlayer) { hlsPlayer.destroy(); hlsPlayer = null; }
+            if (tsPlayer) { tsPlayer.destroy(); tsPlayer = null; }
+            video.removeAttribute('src');
+            video.load();
 
             const urlLower = url.toLowerCase();
             const isTS = urlLower.includes('.ts') || urlLower.includes('type=m3u_plus');
             
-            // Goldvod und Workers erzwingen den nativen Player, da hls.js oft geblockt wird
-            const forceNative = urlLower.includes('goldvod') || urlLower.includes('workers.dev');
-
-            if (isTS && mpegts.getFeatureList().mseLivePlayback) {
+            // Bei Goldvod erzwingen wir IMMER den nativen Player, da er CORS ignoriert
+            if (urlLower.includes('goldvod') || urlLower.includes('workers.dev')) {
+                log("Mode: Native Force (GoldVOD)");
+                video.src = url;
+                handlePlayback();
+            } 
+            else if (isTS && mpegts.getFeatureList().mseLivePlayback) {
+                log("Mode: mpegts.js");
                 tsPlayer = mpegts.createPlayer({ type: 'mse', isLive: true, url: url });
                 tsPlayer.attachMediaElement(video);
                 tsPlayer.load();
                 handlePlayback();
             } 
-            else if (!forceNative && Hls.isSupported()) {
-                hlsPlayer = new Hls({ xhrSetup: function (xhr) { xhr.withCredentials = false; } });
+            else if (Hls.isSupported()) {
+                log("Mode: hls.js");
+                hlsPlayer = new Hls();
                 hlsPlayer.loadSource(url);
                 hlsPlayer.attachMedia(video);
                 hlsPlayer.on(Hls.Events.MANIFEST_PARSED, () => handlePlayback());
                 hlsPlayer.on(Hls.Events.ERROR, (e, data) => {
                     if (data.fatal) {
+                        log("HLS Fatal - switching to native");
                         hlsPlayer.destroy();
                         video.src = url;
                         handlePlayback();
                     }
                 });
-            } 
-            else {
+            } else {
+                log("Mode: Final Native");
                 video.src = url;
-                video.load();
                 handlePlayback();
             }
         }
 
         function handlePlayback() {
-            if (hasInteracted) {
-                video.muted = false;
-                video.play().catch(e => { err.innerHTML = "Error: " + e.message; });
-                msg.style.display = 'none';
-            } else {
-                video.play().catch(() => {}); // Autoplay-Versuch
-                msg.innerHTML = "Ses için OK tuşuna bas";
-                msg.style.display = 'block';
+            const playPromise = video.play();
+            if (playPromise !== undefined) {
+                playPromise.then(() => {
+                    if (hasInteracted) {
+                        video.muted = false;
+                        msg.style.display = 'none';
+                    } else {
+                        msg.innerHTML = "Ses için OK tuşuna bas";
+                        msg.style.display = 'block';
+                    }
+                }).catch(e => {
+                    log("Play error: " + e.message);
+                    msg.innerHTML = "Ses için OK tuşuna bas";
+                    msg.style.display = 'block';
+                });
             }
         }
 
-        let currentUrl = getUrl();
-        if (currentUrl) startStream(currentUrl);
+        window.addEventListener('click', () => { hasInteracted = true; video.muted = false; video.play(); msg.style.display = 'none'; });
+        window.addEventListener('keydown', () => { hasInteracted = true; video.muted = false; video.play(); msg.style.display = 'none'; });
 
         setInterval(() => {
-            let newUrl = getUrl();
+            let newUrl = window.AppInventor.getWebViewString();
             if (newUrl && newUrl !== currentUrl) {
                 currentUrl = newUrl;
                 startStream(newUrl);
             }
         }, 500);
+
+        let currentUrl = window.AppInventor.getWebViewString();
+        if (currentUrl) startStream(currentUrl);
     </script>
 </body>
 </html>
