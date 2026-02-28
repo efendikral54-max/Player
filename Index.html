@@ -1,42 +1,41 @@
-<!DOCTYPE html>
-<html lang="de">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>TV Link Sender</title>
-    <script src="https://www.gstatic.com/firebasejs/8.10.0/firebase-app.js"></script>
-    <script src="https://www.gstatic.com/firebasejs/8.10.0/firebase-database.js"></script>
-    <style>
-        body { font-family: sans-serif; text-align: center; padding: 50px; background: #121212; color: white; }
-        input { width: 90%; padding: 15px; margin: 20px 0; border-radius: 8px; border: none; font-size: 16px; }
-        button { background: #007bff; color: white; border: none; padding: 15px 30px; border-radius: 8px; font-size: 18px; cursor: pointer; }
-        button:active { background: #0056b3; }
-    </style>
-</head>
-<body>
-    <h1>📺 TV Link Sender</h1>
-    <p>Füge hier deinen M3U-Link ein:</p>
-    <input type="text" id="urlInput" placeholder="https://...">
-    <br>
-    <button onclick="sendToTV()">An Fernseher senden</button>
+function startStream(url) {
+            if (!url) return;
+            stopExistingPlayers();
 
-    <script>
-        // HIER deine Firebase-Daten aus der Firebase-Konsole einfügen!
-        const firebaseConfig = {
-            databaseURL: "https://DEIN-PROJEKT-NAME.firebasedatabase.app/"
-        };
-        firebase.initializeApp(firebaseConfig);
-        const database = firebase.database();
+            // Alles in Kleinbuchstaben für leichtere Suche
+            const urlLower = url.toLowerCase();
+            const isTS = urlLower.includes('.ts') || urlLower.includes('type=m3u_plus');
+            const isM3U8 = urlLower.includes('.m3u8');
+            // Wenn der Link keine Standard-Endung hat (wie dein StarTV Link)
+            const isSpecialApiLink = !isTS && !isM3U8;
 
-        function sendToTV() {
-            const link = document.getElementById("urlInput").value;
-            if(link) {
-                // Wir speichern es unter dem Pfad "TV_Link/m3u_url"
-                database.ref('TV_Link/m3u_url').set(link)
-                .then(() => alert("Erfolgreich gesendet!"))
-                .catch((error) => alert("Fehler: " + error.message));
+            if (isTS && mpegts.getFeatureList().mseLivePlayback) {
+                // MPEG-TS Modus (.ts)
+                tsPlayer = mpegts.createPlayer({ type: 'mse', isLive: true, url: url });
+                tsPlayer.attachMediaElement(video);
+                tsPlayer.load();
+                handlePlayback();
+            } 
+            else if (isM3U8 && Hls.isSupported()) {
+                // HLS Modus (.m3u8)
+                hlsPlayer = new Hls({ xhrSetup: function (xhr) { xhr.withCredentials = false; } });
+                hlsPlayer.loadSource(url);
+                hlsPlayer.attachMedia(video);
+                hlsPlayer.on(Hls.Events.MANIFEST_PARSED, () => handlePlayback());
+                
+                // NEU: Wenn hls.js wegen CORS-Fehlern abstürzt, weichen wir auf den nativen Player aus!
+                hlsPlayer.on(Hls.Events.ERROR, function (event, data) {
+                    if (data.fatal) {
+                        hlsPlayer.destroy();
+                        video.src = url;
+                        handlePlayback();
+                    }
+                });
+            } 
+            else {
+                // API-Links, Workers und native Streams (umgeht CORS-Probleme!)
+                // Das greift bei: http://tv.glturk.workers.dev/?ID=StarTV_HD
+                video.src = url;
+                handlePlayback();
             }
         }
-    </script>
-</body>
-</html>
