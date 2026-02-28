@@ -68,7 +68,9 @@
             const urlLower = url.toLowerCase();
             const isTS = urlLower.includes('.ts') || urlLower.includes('type=m3u_plus');
             const isM3U8 = urlLower.includes('.m3u8');
-            const isWorker = urlLower.includes('workers.dev'); 
+            
+            // HIER DIE ERWEITERUNG: workers.dev UND goldvod.site werden direkt abgespielt
+            const needsNative = urlLower.includes('workers.dev') || urlLower.includes('goldvod.site'); 
 
             if (isTS && mpegts.getFeatureList().mseLivePlayback) {
                 tsPlayer = mpegts.createPlayer({ type: 'mse', isLive: true, url: url });
@@ -76,7 +78,8 @@
                 tsPlayer.load();
                 handlePlayback();
             } 
-            else if (!isWorker && Hls.isSupported()) {
+            else if (!needsNative && Hls.isSupported()) {
+                // HLS Modus für normale m3u8 Links
                 hlsPlayer = new Hls({ xhrSetup: function (xhr) { xhr.withCredentials = false; } });
                 hlsPlayer.loadSource(url);
                 hlsPlayer.attachMedia(video);
@@ -91,7 +94,7 @@
                 });
             } 
             else {
-                // Das hier greift bei Workers-Links und als Backup
+                // Native Unterstützung (greift jetzt auch bei goldvod.site)
                 video.src = url;
                 handlePlayback();
             }
