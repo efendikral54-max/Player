@@ -7,18 +7,9 @@
     <script src="https://cdn.jsdelivr.net/npm/hls.js@latest"></script>
     <script src="https://cdn.jsdelivr.net/npm/mpegts.js@latest/dist/mpegts.min.js"></script>
     <style>
-        body, html { 
-            margin: 0; padding: 0; width: 100%; height: 100%; 
-            background-color: #000; overflow: hidden; 
-            display: flex; justify-content: center; align-items: center;
-        }
+        body, html { margin: 0; padding: 0; width: 100%; height: 100%; background-color: #000; overflow: hidden; display: flex; justify-content: center; align-items: center; }
         video { position: absolute; width: 100%; height: 100%; object-fit: contain; z-index: 1; }
-        #msg { 
-            position: relative; z-index: 100; color: white; 
-            font-family: sans-serif; font-size: 22px; font-weight: bold;
-            text-align: center; background: rgba(0, 0, 0, 0.7); 
-            padding: 25px; border-radius: 15px; border: 2px solid rgba(255, 255, 255, 0.2);
-        }
+        #msg { position: relative; z-index: 100; color: white; font-family: sans-serif; font-size: 20px; font-weight: bold; text-align: center; background: rgba(0, 0, 0, 0.7); padding: 20px; border-radius: 10px; }
     </style>
 </head>
 <body>
@@ -30,89 +21,60 @@
         const msg = document.getElementById('msg');
         let hlsPlayer = null;
         let tsPlayer = null;
-        let hasInteracted = false; 
+        let hasInteracted = false;
 
-        function getUrl() {
-            return window.AppInventor.getWebViewString();
-        }
+        function startStream(combinedData) {
+            // Wir splitten das Paket: URL | Referer | Origin
+            const parts = combinedData.split('|');
+            const url = parts[0];
+            const ref = parts[1] || "";
+            const org = parts[2] || "";
 
-        function forcePlay() {
-            hasInteracted = true; 
-            video.muted = false;
-            video.volume = 1.0;
-            video.play();
-            msg.style.display = 'none';
-        }
-
-        window.addEventListener('keydown', forcePlay);
-        window.addEventListener('click', forcePlay);
-
-        function stopExistingPlayers() {
-            if (hlsPlayer) { hlsPlayer.destroy(); hlsPlayer = null; }
-            if (tsPlayer) { tsPlayer.unload(); tsPlayer.detachMediaElement(); tsPlayer.destroy(); tsPlayer = null; }
-            video.src = "";
-        }
-
-        function startStream(url) {
-            // WICHTIG: Nur starten, wenn es eine URL ist (verhindert Error 1109)
             if (!url || !url.startsWith('http')) return;
-            
-            stopExistingPlayers();
-            const urlLower = url.toLowerCase();
-            
-            // Erkennung für nxn12 .css Dateien
-            const isTS = urlLower.includes('.ts') || urlLower.includes('type=m3u_plus');
-            const isHLS = urlLower.includes('.m3u8') || urlLower.includes('.css') || urlLower.includes('nxn12.xyz');
 
-            if (isTS && mpegts.getFeatureList().mseLivePlayback) {
-                tsPlayer = mpegts.createPlayer({ type: 'mse', isLive: true, url: url });
-                tsPlayer.attachMediaElement(video);
-                tsPlayer.load();
-                handlePlayback();
-            } 
-            else if (isHLS && Hls.isSupported()) {
-                // Wir zwingen hls.js dazu, die .css Datei als Video zu laden
-                hlsPlayer = new Hls({ 
-                    xhrSetup: function (xhr) { xhr.withCredentials = false; }
+            if (hlsPlayer) { hlsPlayer.destroy(); hlsPlayer = null; }
+            if (tsPlayer) { tsPlayer.destroy(); tsPlayer = null; }
+            video.src = "";
+
+            const urlLower = url.toLowerCase();
+            const isTS = urlLower.includes('.ts');
+
+            // HLS Konfiguration mit Header-Versuch
+            if (!isTS && Hls.isSupported()) {
+                hlsPlayer = new Hls({
+                    xhrSetup: function (xhr, url) {
+                        // Hinweis: Echte 'Referer' Header blockiert der Browser oft. 
+                        // Wir versuchen es trotzdem oder nutzen Custom Header.
+                        if (ref) xhr.setRequestHeader('X-Requested-With', 'XMLHttpRequest'); 
+                        xhr.withCredentials = false;
+                    }
                 });
                 hlsPlayer.loadSource(url);
                 hlsPlayer.attachMedia(video);
                 hlsPlayer.on(Hls.Events.MANIFEST_PARSED, () => handlePlayback());
-                
-                hlsPlayer.on(Hls.Events.ERROR, function (event, data) {
-                    if (data.fatal) {
-                        hlsPlayer.destroy();
-                        video.src = url; // Fallback auf System
-                        handlePlayback();
-                    }
-                });
-            } 
-            else {
+            } else {
                 video.src = url;
                 handlePlayback();
             }
         }
 
         function handlePlayback() {
-            if (hasInteracted) {
-                video.muted = false;
-                video.play();
-                msg.style.display = 'none';
-            } else {
-                video.play();
-                msg.innerHTML = "Ses için OK tuşuna bas";
-                msg.style.display = 'block';
-            }
+            video.play().then(() => {
+                if (hasInteracted) { msg.style.display = 'none'; video.muted = false; }
+                else { msg.innerHTML = "SES İÇİN TIKLA"; }
+            }).catch(() => { msg.innerHTML = "SES İÇİN TIKLA"; });
         }
 
-        let currentUrl = getUrl();
-        if (currentUrl) startStream(currentUrl);
+        window.addEventListener('click', () => { hasInteracted = true; video.muted = false; video.play(); msg.style.display = 'none'; });
 
         setInterval(() => {
-            let newUrl = getUrl();
-            if (newUrl && newUrl !== currentUrl) {
-                currentUrl = newUrl;
-                startStream(newUrl);
+            let newData = window.AppInventor.getWebViewString();
+            if (newData && newData.length > 10) {
+                // Wir prüfen nur die URL am Anfang des Pakets
+                let newUrl = newData.split('|')[0];
+                if (newUrl !== video.src) {
+                    startStream(newData);
+                }
             }
         }, 500);
     </script>
