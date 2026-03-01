@@ -3,80 +3,80 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Universal IPTV Player</title>
+    <title>TV Stream Player</title>
     <script src="https://cdn.jsdelivr.net/npm/hls.js@latest"></script>
-    <script src="https://cdn.jsdelivr.net/npm/mpegts.js@latest/dist/mpegts.min.js"></script>
     <style>
-        body, html { margin: 0; padding: 0; width: 100%; height: 100%; background-color: #000; overflow: hidden; display: flex; justify-content: center; align-items: center; }
-        video { position: absolute; width: 100%; height: 100%; object-fit: contain; z-index: 1; }
-        #msg { position: relative; z-index: 100; color: white; font-family: sans-serif; font-size: 20px; font-weight: bold; text-align: center; background: rgba(0, 0, 0, 0.7); padding: 20px; border-radius: 10px; }
+        body { margin: 0; background: #000; overflow: hidden; display: flex; justify-content: center; align-items: center; height: 100vh; font-family: sans-serif; }
+        video { width: 100%; height: 100%; outline: none; }
+        
+        /* Overlay für den Sound-Hinweis */
+        #sound-hint {
+            position: absolute;
+            background: rgba(0, 0, 0, 0.7);
+            color: white;
+            padding: 20px 40px;
+            border-radius: 15px;
+            font-size: 24px;
+            text-align: center;
+            z-index: 10;
+            transition: opacity 0.5s;
+        }
+        .hidden { opacity: 0; pointer-events: none; }
     </style>
 </head>
 <body>
-    <video id="video" playsinline autoplay muted></video>
-    <div id="msg">Yükleniyor...</div>
+
+    <div id="sound-hint">Ses için ⬆️yukarı veya ⬇️aşağı tuşuna basın</div>
+    <video id="video" muted autoplay></video>
 
     <script>
         const video = document.getElementById('video');
-        const msg = document.getElementById('msg');
-        let hlsPlayer = null;
-        let tsPlayer = null;
-        let hasInteracted = false;
+        const hint = document.getElementById('sound-hint');
+        const streamUrl = 'https://vs11.gamephotos.pro/v/Ahsoka.S01E01.WEB-DL.1080p.DUAL.H.264-HDM/master.m3u8';
 
-        function startStream(combinedData) {
-            // Wir splitten das Paket: URL | Referer | Origin
-            const parts = combinedData.split('|');
-            const url = parts[0];
-            const ref = parts[1] || "";
-            const org = parts[2] || "";
+        // HLS Support initialisieren
+        if (Hls.isSupported()) {
+            const hls = new Hls();
+            hls.loadSource(streamUrl);
+            hls.attachMedia(video);
+            hls.on(Hls.Events.MANIFEST_PARSED, function() {
+                video.play();
+            });
+        } else if (video.canPlayType('application/vnd.apple.mpegurl')) {
+            // Für Safari oder einige Smart-TVs
+            video.src = streamUrl;
+            video.play();
+        }
 
-            if (!url || !url.startsWith('http')) return;
-
-            if (hlsPlayer) { hlsPlayer.destroy(); hlsPlayer = null; }
-            if (tsPlayer) { tsPlayer.destroy(); tsPlayer = null; }
-            video.src = "";
-
-            const urlLower = url.toLowerCase();
-            const isTS = urlLower.includes('.ts');
-
-            // HLS Konfiguration mit Header-Versuch
-            if (!isTS && Hls.isSupported()) {
-                hlsPlayer = new Hls({
-                    xhrSetup: function (xhr, url) {
-                        // Hinweis: Echte 'Referer' Header blockiert der Browser oft. 
-                        // Wir versuchen es trotzdem oder nutzen Custom Header.
-                        if (ref) xhr.setRequestHeader('X-Requested-With', 'XMLHttpRequest'); 
-                        xhr.withCredentials = false;
+        // Fernbedienungs-Logik
+        window.addEventListener('keydown', (event) => {
+            switch(event.keyCode) {
+                case 38: // Pfeil nach Oben
+                case 40: // Pfeil nach Unten
+                    if (video.muted) {
+                        video.muted = false;
+                        video.volume = 0.5;
+                        hint.classList.add('hidden');
                     }
-                });
-                hlsPlayer.loadSource(url);
-                hlsPlayer.attachMedia(video);
-                hlsPlayer.on(Hls.Events.MANIFEST_PARSED, () => handlePlayback());
-            } else {
-                video.src = url;
-                handlePlayback();
+                    // Lautstärke regeln
+                    if (event.keyCode === 38) video.volume = Math.min(1, video.volume + 0.1);
+                    if (event.keyCode === 40) video.volume = Math.max(0, video.volume - 0.1);
+                    break;
+
+                case 13: // OK / Enter Taste
+                    if (video.paused) video.play();
+                    else video.pause();
+                    break;
+
+                case 39: // Pfeil Rechts (10s vor)
+                    video.currentTime += 10;
+                    break;
+
+                case 37: // Pfeil Links (10s zurück)
+                    video.currentTime -= 10;
+                    break;
             }
-        }
-
-        function handlePlayback() {
-            video.play().then(() => {
-                if (hasInteracted) { msg.style.display = 'none'; video.muted = false; }
-                else { msg.innerHTML = "SES İÇİN TIKLA"; }
-            }).catch(() => { msg.innerHTML = "SES İÇİN TIKLA"; });
-        }
-
-        window.addEventListener('click', () => { hasInteracted = true; video.muted = false; video.play(); msg.style.display = 'none'; });
-
-        setInterval(() => {
-            let newData = window.AppInventor.getWebViewString();
-            if (newData && newData.length > 10) {
-                // Wir prüfen nur die URL am Anfang des Pakets
-                let newUrl = newData.split('|')[0];
-                if (newUrl !== video.src) {
-                    startStream(newData);
-                }
-            }
-        }, 500);
+        });
     </script>
 </body>
 </html>
