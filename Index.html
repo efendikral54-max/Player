@@ -3,20 +3,19 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>TV Stream Player</title>
+    <title>Dynamic TV Player</title>
     <script src="https://cdn.jsdelivr.net/npm/hls.js@latest"></script>
     <style>
         body { margin: 0; background: #000; overflow: hidden; display: flex; justify-content: center; align-items: center; height: 100vh; font-family: sans-serif; }
         video { width: 100%; height: 100%; outline: none; }
-        
-        /* Overlay für den Sound-Hinweis */
         #sound-hint {
             position: absolute;
-            background: rgba(0, 0, 0, 0.7);
+            background: rgba(0, 0, 0, 0.8);
             color: white;
             padding: 20px 40px;
             border-radius: 15px;
-            font-size: 24px;
+            font-size: 26px;
+            font-weight: bold;
             text-align: center;
             z-index: 10;
             transition: opacity 0.5s;
@@ -26,53 +25,66 @@
 </head>
 <body>
 
-    <div id="sound-hint">Ses için ⬆️yukarı veya ⬇️aşağı tuşuna basın</div>
-    <video id="video" muted autoplay></video>
+    <div id="sound-hint">Ses için ⬆️yukarı oder ⬇️aşağı tuşuna basın</div>
+    <video id="video" muted autoplay playsinline></video>
 
     <script>
         const video = document.getElementById('video');
         const hint = document.getElementById('sound-hint');
-        const streamUrl = 'https://vs11.gamephotos.pro/v/Ahsoka.S01E01.WEB-DL.1080p.DUAL.H.264-HDM/master.m3u8';
 
-        // HLS Support initialisieren
-        if (Hls.isSupported()) {
-            const hls = new Hls();
-            hls.loadSource(streamUrl);
-            hls.attachMedia(video);
-            hls.on(Hls.Events.MANIFEST_PARSED, function() {
+        // WICHTIG: Holt den Link aus Kodular (global Test)
+        let streamUrl = "";
+        
+        function startPlayer() {
+            // Versuche den Link aus dem WebViewString zu lesen
+            if (window.AppInventor) {
+                streamUrl = window.AppInventor.getWebViewString();
+            }
+
+            if (!streamUrl || streamUrl === "") {
+                console.log("Warte auf URL...");
+                setTimeout(startPlayer, 500); // Falls die App noch lädt, kurz warten
+                return;
+            }
+
+            if (Hls.isSupported()) {
+                const hls = new Hls();
+                hls.loadSource(streamUrl);
+                hls.attachMedia(video);
+                hls.on(Hls.Events.MANIFEST_PARSED, () => video.play());
+            } else if (video.canPlayType('application/vnd.apple.mpegurl')) {
+                video.src = streamUrl;
                 video.play();
-            });
-        } else if (video.canPlayType('application/vnd.apple.mpegurl')) {
-            // Für Safari oder einige Smart-TVs
-            video.src = streamUrl;
-            video.play();
+            }
         }
 
-        // Fernbedienungs-Logik
+        // Starte die Abfrage
+        window.onload = startPlayer;
+
+        // Fernbedienungs-Logik (KeyCodes)
         window.addEventListener('keydown', (event) => {
             switch(event.keyCode) {
-                case 38: // Pfeil nach Oben
-                case 40: // Pfeil nach Unten
+                case 38: // Pfeil Hoch
+                case 40: // Pfeil Runter
                     if (video.muted) {
                         video.muted = false;
                         video.volume = 0.5;
                         hint.classList.add('hidden');
                     }
-                    // Lautstärke regeln
                     if (event.keyCode === 38) video.volume = Math.min(1, video.volume + 0.1);
                     if (event.keyCode === 40) video.volume = Math.max(0, video.volume - 0.1);
                     break;
 
-                case 13: // OK / Enter Taste
+                case 13: // OK-Taste
                     if (video.paused) video.play();
                     else video.pause();
                     break;
 
-                case 39: // Pfeil Rechts (10s vor)
+                case 39: // Rechts (10s vor)
                     video.currentTime += 10;
                     break;
 
-                case 37: // Pfeil Links (10s zurück)
+                case 37: // Links (10s zurück)
                     video.currentTime -= 10;
                     break;
             }
