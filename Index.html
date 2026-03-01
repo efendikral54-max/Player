@@ -3,92 +3,110 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Dynamic TV Player</title>
+    <title>Smart TV Player</title>
     <script src="https://cdn.jsdelivr.net/npm/hls.js@latest"></script>
     <style>
-        body { margin: 0; background: #000; overflow: hidden; display: flex; justify-content: center; align-items: center; height: 100vh; font-family: sans-serif; }
-        video { width: 100%; height: 100%; outline: none; }
+        body, html { margin: 0; padding: 0; width: 100%; height: 100%; background: #000; overflow: hidden; font-family: sans-serif; }
+        #video-container, #iframe-container { width: 100%; height: 100%; position: absolute; top: 0; left: 0; }
+        video, iframe { width: 100%; height: 100%; border: none; }
+        
         #sound-hint {
             position: absolute;
-            background: rgba(0, 0, 0, 0.8);
+            top: 50%; left: 50%;
+            transform: translate(-50%, -50%);
+            background: rgba(0, 0, 0, 0.85);
             color: white;
-            padding: 20px 40px;
-            border-radius: 15px;
-            font-size: 26px;
+            padding: 25px 50px;
+            border-radius: 20px;
+            font-size: 28px;
             font-weight: bold;
             text-align: center;
-            z-index: 10;
-            transition: opacity 0.5s;
+            z-index: 100;
+            transition: opacity 0.6s;
+            border: 2px solid #fff;
         }
         .hidden { opacity: 0; pointer-events: none; }
     </style>
 </head>
 <body>
 
-    <div id="sound-hint">Ses için ⬆️yukarı oder ⬇️aşağı tuşuna basın</div>
-    <video id="video" muted autoplay playsinline></video>
+    <div id="sound-hint">Ses için ⬆️yukarı veya ⬇️aşağı tuşuna basın</div>
+    
+    <div id="player-target"></div>
 
     <script>
-        const video = document.getElementById('video');
         const hint = document.getElementById('sound-hint');
-
-        // WICHTIG: Holt den Link aus Kodular (global Test)
-        let streamUrl = "";
+        const target = document.getElementById('player-target');
         
-        function startPlayer() {
-            // Versuche den Link aus dem WebViewString zu lesen
-            if (window.AppInventor) {
-                streamUrl = window.AppInventor.getWebViewString();
-            }
+        // Holt den Link aus Kodular (global Test)
+        let streamUrl = "";
+        if (window.AppInventor) {
+            streamUrl = window.AppInventor.getWebViewString();
+        }
 
-            if (!streamUrl || streamUrl === "") {
-                console.log("Warte auf URL...");
-                setTimeout(startPlayer, 500); // Falls die App noch lädt, kurz warten
+        function initPlayer() {
+            if (!streamUrl) {
+                // Falls noch leer, kurz warten und erneut versuchen
+                setTimeout(() => {
+                    streamUrl = window.AppInventor.getWebViewString();
+                    if(streamUrl) initPlayer();
+                }, 500);
                 return;
             }
 
-            if (Hls.isSupported()) {
-                const hls = new Hls();
-                hls.loadSource(streamUrl);
-                hls.attachMedia(video);
-                hls.on(Hls.Events.MANIFEST_PARSED, () => video.play());
-            } else if (video.canPlayType('application/vnd.apple.mpegurl')) {
-                video.src = streamUrl;
-                video.play();
+            // Prüfen ob es ein direkter Stream (.m3u8 / .mp4) oder eine Webseite ist
+            if (streamUrl.includes(".m3u8") || streamUrl.includes(".mp4") || streamUrl.includes("/master")) {
+                loadDirectVideo(streamUrl);
+            } else {
+                loadIframeVideo(streamUrl);
             }
         }
 
-        // Starte die Abfrage
-        window.onload = startPlayer;
-
-        // Fernbedienungs-Logik (KeyCodes)
-        window.addEventListener('keydown', (event) => {
-            switch(event.keyCode) {
-                case 38: // Pfeil Hoch
-                case 40: // Pfeil Runter
-                    if (video.muted) {
-                        video.muted = false;
-                        video.volume = 0.5;
-                        hint.classList.add('hidden');
-                    }
-                    if (event.keyCode === 38) video.volume = Math.min(1, video.volume + 0.1);
-                    if (event.keyCode === 40) video.volume = Math.max(0, video.volume - 0.1);
-                    break;
-
-                case 13: // OK-Taste
-                    if (video.paused) video.play();
-                    else video.pause();
-                    break;
-
-                case 39: // Rechts (10s vor)
-                    video.currentTime += 10;
-                    break;
-
-                case 37: // Links (10s zurück)
-                    video.currentTime -= 10;
-                    break;
+        function loadDirectVideo(url) {
+            target.innerHTML = '<video id="video" muted autoplay playsinline></video>';
+            const video = document.getElementById('video');
+            if (Hls.isSupported()) {
+                const hls = new Hls();
+                hls.loadSource(url);
+                hls.attachMedia(video);
+                hls.on(Hls.Events.MANIFEST_PARSED, () => video.play());
+            } else {
+                video.src = url;
+                video.play();
             }
-        });
+            setupRemoteControls(video, true);
+        }
+
+        function loadIframeVideo(url) {
+            // Browser-Modus für Vidmody & Co
+            target.innerHTML = `<iframe id="video-frame" src="${url}" allow="autoplay; fullscreen"></iframe>`;
+            setupRemoteControls(null, false);
+        }
+
+        function setupRemoteControls(videoElement, isDirect) {
+            window.addEventListener('keydown', (event) => {
+                // Sound-Hinweis ausblenden und Ton an (Up/Down)
+                if (event.keyCode === 38 || event.keyCode === 40) {
+                    hint.classList.add('hidden');
+                    if (isDirect && videoElement) {
+                        videoElement.muted = false;
+                        if (event.keyCode === 38) videoElement.volume = Math.min(1, videoElement.volume + 0.1);
+                        if (event.keyCode === 40) videoElement.volume = Math.max(0, videoElement.volume - 0.1);
+                    }
+                }
+
+                // NUR für direkte Videodateien (m3u8) funktionieren OK/Links/Rechts
+                if (isDirect && videoElement) {
+                    if (event.keyCode === 13) { // OK
+                        videoElement.paused ? videoElement.play() : videoElement.pause();
+                    }
+                    if (event.keyCode === 39) videoElement.currentTime += 10; // Rechts
+                    if (event.keyCode === 37) videoElement.currentTime -= 10; // Links
+                }
+            });
+        }
+
+        window.onload = initPlayer;
     </script>
 </body>
 </html>
