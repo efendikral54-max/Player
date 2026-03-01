@@ -51,20 +51,18 @@
             if (hlsPlayer) { hlsPlayer.destroy(); hlsPlayer = null; }
             if (tsPlayer) { tsPlayer.unload(); tsPlayer.detachMediaElement(); tsPlayer.destroy(); tsPlayer = null; }
             video.src = "";
-            video.load();
         }
 
         function startStream(url) {
-            // WICHTIG: Prüfung ob es eine echte URL ist (verhindert Error 1109)
+            // WICHTIG: Nur starten, wenn es eine URL ist (verhindert Error 1109)
             if (!url || !url.startsWith('http')) return;
             
             stopExistingPlayers();
             const urlLower = url.toLowerCase();
             
-            // Erkennt .ts und .css (für nxn12.xyz)
+            // Erkennung für nxn12 .css Dateien
             const isTS = urlLower.includes('.ts') || urlLower.includes('type=m3u_plus');
-            const isSpecial = urlLower.includes('.css') || urlLower.includes('nxn12.xyz');
-            const isWorker = urlLower.includes('workers.dev'); 
+            const isHLS = urlLower.includes('.m3u8') || urlLower.includes('.css') || urlLower.includes('nxn12.xyz');
 
             if (isTS && mpegts.getFeatureList().mseLivePlayback) {
                 tsPlayer = mpegts.createPlayer({ type: 'mse', isLive: true, url: url });
@@ -72,11 +70,10 @@
                 tsPlayer.load();
                 handlePlayback();
             } 
-            else if (Hls.isSupported() && !isWorker) {
-                // Konfiguration für nxn12.xyz: Wir ignorieren die .css Endung
+            else if (isHLS && Hls.isSupported()) {
+                // Wir zwingen hls.js dazu, die .css Datei als Video zu laden
                 hlsPlayer = new Hls({ 
-                    xhrSetup: function (xhr) { xhr.withCredentials = false; },
-                    strictM3u8: false 
+                    xhrSetup: function (xhr) { xhr.withCredentials = false; }
                 });
                 hlsPlayer.loadSource(url);
                 hlsPlayer.attachMedia(video);
@@ -85,7 +82,7 @@
                 hlsPlayer.on(Hls.Events.ERROR, function (event, data) {
                     if (data.fatal) {
                         hlsPlayer.destroy();
-                        video.src = url; // Fallback auf System-Player
+                        video.src = url; // Fallback auf System
                         handlePlayback();
                     }
                 });
@@ -97,20 +94,14 @@
         }
 
         function handlePlayback() {
-            const playPromise = video.play();
-            if (playPromise !== undefined) {
-                playPromise.then(() => {
-                    if (hasInteracted) {
-                        video.muted = false;
-                        msg.style.display = 'none';
-                    } else {
-                        msg.innerHTML = "Ses için OK tuşuna bas";
-                        msg.style.display = 'block';
-                    }
-                }).catch(() => {
-                    msg.innerHTML = "Ses für OK tuşuna bas";
-                    msg.style.display = 'block';
-                });
+            if (hasInteracted) {
+                video.muted = false;
+                video.play();
+                msg.style.display = 'none';
+            } else {
+                video.play();
+                msg.innerHTML = "Ses için OK tuşuna bas";
+                msg.style.display = 'block';
             }
         }
 
