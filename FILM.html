@@ -1,0 +1,462 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Film Player</title>
+    <script src="https://cdn.jsdelivr.net/npm/hls.js@latest"></script>
+    <script src="https://cdn.jsdelivr.net/npm/mpegts.js@latest/dist/mpegts.min.js"></script>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body, html { width: 100%; height: 100%; background: #000; overflow: hidden; font-family: sans-serif; }
+        video { position: absolute; width: 100%; height: 100%; object-fit: contain; z-index: 1; }
+
+        /* Ses aktivasyon overlay */
+        #soundOverlay {
+            position: fixed; inset: 0; z-index: 1000;
+            display: flex; flex-direction: column;
+            align-items: center; justify-content: center;
+            background: rgba(0,0,0,0.6); cursor: pointer;
+        }
+        #soundOverlay .icon { font-size: 80px; margin-bottom: 20px; }
+        #soundOverlay .text {
+            color: white; font-size: 24px; font-weight: bold;
+            background: rgba(229,9,20,0.9); padding: 16px 40px;
+            border-radius: 50px; border: 3px solid white;
+        }
+        #soundOverlay .sub { color: rgba(255,255,255,0.7); font-size: 16px; margin-top: 14px; }
+        #soundOverlay.hidden { display: none; }
+
+        /* Devam et dialog */
+        #resumeDialog {
+            position: fixed; inset: 0; z-index: 2000;
+            display: flex; align-items: center; justify-content: center;
+            background: rgba(0,0,0,0.75);
+        }
+        #resumeDialog.hidden { display: none; }
+        #resumeBox {
+            background: #1a1a1a; border: 2px solid #e50914;
+            border-radius: 16px; padding: 32px 40px;
+            text-align: center; max-width: 480px;
+            color: white;
+        }
+        #resumeBox .title { font-size: 22px; font-weight: bold; margin-bottom: 10px; }
+        #resumeBox .sub   { font-size: 16px; color: #aaa; margin-bottom: 28px; }
+        #resumeBox .btns  { display: flex; gap: 16px; justify-content: center; }
+        #resumeBox button {
+            padding: 12px 28px; border: none; border-radius: 8px;
+            font-size: 17px; font-weight: bold; cursor: pointer;
+        }
+        #btnResume { background: #e50914; color: white; }
+        #btnRestart { background: #333; color: white; border: 2px solid #666; }
+        #btnResume:hover, #btnResume:focus   { background: #ff2020; outline: 3px solid white; }
+        #btnRestart:hover, #btnRestart:focus { background: #444; outline: 3px solid white; }
+
+        #progressContainer {
+            position: fixed; bottom: 0; left: 0; right: 0; height: 4px;
+            background: rgba(255,255,255,0.2); z-index: 100; cursor: pointer;
+            transition: height 0.2s;
+        }
+        #progressContainer:hover { height: 8px; }
+        #progressBar { height: 100%; background: #e50914; width: 0%; transition: width 0.3s; }
+
+        #timeDisplay {
+            position: fixed; bottom: 10px; right: 14px; z-index: 200;
+            color: white; font-size: 13px; font-weight: bold;
+            background: rgba(0,0,0,0.6); padding: 4px 10px; border-radius: 6px;
+            opacity: 0; transition: opacity 0.4s;
+        }
+        #timeDisplay.visible { opacity: 1; }
+
+        #status {
+            position: fixed; top: 12px; left: 12px; z-index: 400;
+            background: rgba(0,0,0,0.75); padding: 7px 13px;
+            border-radius: 8px; font-size: 13px; font-weight: bold;
+            display: none; transition: opacity 0.8s;
+        }
+
+        #skipIndicator {
+            position: fixed; top: 50%; z-index: 500;
+            background: rgba(0,0,0,0.6); color: white;
+            padding: 12px 20px; border-radius: 10px; font-size: 18px;
+            font-weight: bold; display: none;
+        }
+        #skipIndicator.left  { left: 15%; transform: translateY(-50%); }
+        #skipIndicator.right { right: 15%; transform: translateY(-50%); }
+
+        #volumeIndicator {
+            position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%);
+            z-index: 500; background: rgba(0,0,0,0.7); color: white;
+            padding: 14px 22px; border-radius: 10px; font-size: 20px; display: none;
+        }
+
+        #spinner {
+            position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%);
+            z-index: 300; width: 50px; height: 50px;
+            border: 4px solid rgba(255,255,255,0.2);
+            border-top: 4px solid #e50914; border-radius: 50%;
+            display: none; animation: spin 0.8s linear infinite;
+        }
+        @keyframes spin { to { transform: translate(-50%, -50%) rotate(360deg); } }
+    </style>
+</head>
+<body>
+    <video id="video" playsinline autoplay muted></video>
+
+    <div id="soundOverlay">
+        <div class="icon">🔇</div>
+        <div class="text">🔊 Sese Başla</div>
+        <div class="sub">Herhangi bir tuşa bas veya tıkla</div>
+    </div>
+
+    <div id="resumeDialog" class="hidden">
+        <div id="resumeBox">
+            <div class="title">📽️ Kaldığın Yerden Devam Et</div>
+            <div class="sub" id="resumeSub">Filmi <b id="resumeTime"></b> dakikasından izlemiştin.</div>
+            <div class="btns">
+                <button id="btnResume">▶ Devam Et</button>
+                <button id="btnRestart">↺ Baştan Başla</button>
+            </div>
+        </div>
+    </div>
+
+    <div id="spinner"></div>
+    <div id="status"></div>
+    <div id="skipIndicator"></div>
+    <div id="volumeIndicator"></div>
+    <div id="progressContainer"><div id="progressBar"></div></div>
+    <div id="timeDisplay"></div>
+
+    <script>
+        const WORKER = 'https://filmvedizi.efendikral54.workers.dev/';
+
+        const video           = document.getElementById('video');
+        const progressBar     = document.getElementById('progressBar');
+        const progressCont    = document.getElementById('progressContainer');
+        const timeDisplay     = document.getElementById('timeDisplay');
+        const spinner         = document.getElementById('spinner');
+        const statusEl        = document.getElementById('status');
+        const skipIndicator   = document.getElementById('skipIndicator');
+        const volumeIndicator = document.getElementById('volumeIndicator');
+        const soundOverlay    = document.getElementById('soundOverlay');
+        const resumeDialog    = document.getElementById('resumeDialog');
+        const resumeTime      = document.getElementById('resumeTime');
+        const btnResume       = document.getElementById('btnResume');
+        const btnRestart      = document.getElementById('btnRestart');
+
+        let hlsPlayer = null, tsPlayer = null;
+        let hasInteracted = false;
+        let lastCmd = '';
+        let currentUrl = '';
+        let statusTimer = null, skipTimer = null, volTimer = null, timeTimer = null;
+        let saveTimer = null;
+        let resumeFocused = 'resume'; // hangi buton focused
+
+        // ── Ses aktivasyonu ──────────────────────────────────────
+        function activateSound() {
+            if (hasInteracted) return;
+            hasInteracted = true;
+            video.muted  = false;
+            video.volume = 1.0;
+            video.play().catch(() => {});
+            soundOverlay.classList.add('hidden');
+        }
+
+        soundOverlay.addEventListener('click', activateSound);
+
+        // ── İzleme pozisyonu kaydet/yükle ────────────────────────
+        function getStorageKey(url) {
+            // URL'den basit bir anahtar oluştur
+            return 'pos_' + btoa(url).replace(/[^a-zA-Z0-9]/g, '').substring(0, 50);
+        }
+
+        function savePosition() {
+            if (!currentUrl || !video.duration || isNaN(video.duration)) return;
+            if (video.currentTime < 10) return; // 10 saniyeden az izlendiyse kaydetme
+            const pct = video.currentTime / video.duration;
+            if (pct > 0.95) {
+                // Filmin sonuna geldiyse kaydı sil
+                localStorage.removeItem(getStorageKey(currentUrl));
+                return;
+            }
+            localStorage.setItem(getStorageKey(currentUrl), JSON.stringify({
+                time: video.currentTime,
+                duration: video.duration,
+                saved: Date.now()
+            }));
+        }
+
+        function loadPosition(url) {
+            try {
+                const data = JSON.parse(localStorage.getItem(getStorageKey(url)));
+                if (data && data.time > 10) return data;
+            } catch(e) {}
+            return null;
+        }
+
+        function showResumeDialog(savedTime) {
+            const min = Math.floor(savedTime / 60);
+            const sec = Math.floor(savedTime % 60);
+            resumeTime.textContent = min + ':' + String(sec).padStart(2,'0');
+            resumeDialog.classList.remove('hidden');
+            btnResume.focus();
+            resumeFocused = 'resume';
+        }
+
+        btnResume.addEventListener('click', () => {
+            const data = loadPosition(currentUrl);
+            if (data) video.currentTime = data.time;
+            resumeDialog.classList.add('hidden');
+            if (hasInteracted) { video.muted = false; video.play(); }
+        });
+
+        btnRestart.addEventListener('click', () => {
+            video.currentTime = 0;
+            resumeDialog.classList.add('hidden');
+            localStorage.removeItem(getStorageKey(currentUrl));
+            if (hasInteracted) { video.muted = false; video.play(); }
+        });
+
+        // ── Yardımcılar ──────────────────────────────────────────
+        function formatTime(sec) {
+            if (isNaN(sec) || !isFinite(sec)) return '0:00';
+            const h = Math.floor(sec / 3600);
+            const m = Math.floor((sec % 3600) / 60);
+            const s = Math.floor(sec % 60);
+            if (h > 0) return h + ':' + String(m).padStart(2,'0') + ':' + String(s).padStart(2,'0');
+            return m + ':' + String(s).padStart(2,'0');
+        }
+
+        function showStatus(text, color) {
+            if (statusTimer) clearTimeout(statusTimer);
+            statusEl.style.color   = color || '#ffcc00';
+            statusEl.textContent   = text;
+            statusEl.style.display = 'block';
+            statusEl.style.opacity = '1';
+            statusTimer = setTimeout(() => {
+                statusEl.style.opacity = '0';
+                setTimeout(() => { statusEl.style.display = 'none'; }, 800);
+            }, 5000);
+        }
+
+        function showSkip(side, text) {
+            if (skipTimer) clearTimeout(skipTimer);
+            skipIndicator.textContent = text;
+            skipIndicator.className   = side;
+            skipIndicator.style.display = 'block';
+            skipTimer = setTimeout(() => { skipIndicator.style.display = 'none'; }, 800);
+        }
+
+        function showVolume(pct) {
+            if (volTimer) clearTimeout(volTimer);
+            volumeIndicator.textContent = '🔊 ' + pct + '%';
+            volumeIndicator.style.display = 'block';
+            volTimer = setTimeout(() => { volumeIndicator.style.display = 'none'; }, 1200);
+        }
+
+        function showTime() {
+            if (timeTimer) clearTimeout(timeTimer);
+            timeDisplay.classList.add('visible');
+            timeTimer = setTimeout(() => { timeDisplay.classList.remove('visible'); }, 3000);
+        }
+
+        // ── Progress ─────────────────────────────────────────────
+        video.addEventListener('timeupdate', () => {
+            if (!video.duration || isNaN(video.duration)) return;
+            const pct = (video.currentTime / video.duration) * 100;
+            progressBar.style.width = pct + '%';
+            timeDisplay.textContent = formatTime(video.currentTime) + ' / ' + formatTime(video.duration);
+        });
+
+        // Her 5 dakikada bir pozisyonu kaydet
+        setInterval(savePosition, 300000);
+        window.addEventListener('beforeunload', savePosition);
+
+        progressCont.addEventListener('click', (e) => {
+            const rect = progressCont.getBoundingClientRect();
+            video.currentTime = ((e.clientX - rect.left) / rect.width) * (video.duration || 0);
+            showTime();
+        });
+
+        progressCont.addEventListener('touchmove', (e) => {
+            const rect = progressCont.getBoundingClientRect();
+            const pct  = Math.max(0, Math.min(1, (e.touches[0].clientX - rect.left) / rect.width));
+            video.currentTime = pct * (video.duration || 0);
+            showTime();
+        });
+
+        video.addEventListener('waiting', () => { spinner.style.display = 'block'; });
+        video.addEventListener('playing', () => { spinner.style.display = 'none'; });
+        video.addEventListener('canplay', () => { spinner.style.display = 'none'; });
+
+        // ── Touch ────────────────────────────────────────────────
+        let lastTap = 0;
+        video.addEventListener('touchend', (e) => {
+            if (!hasInteracted) { activateSound(); return; }
+            const now = Date.now();
+            if (now - lastTap < 300) {
+                seek(e.changedTouches[0].clientX < window.innerWidth / 2 ? -10 : 10);
+            } else { togglePlay(); }
+            lastTap = now;
+        });
+
+        function seek(sec) {
+            video.currentTime = Math.max(0, Math.min(video.duration || 0, video.currentTime + sec));
+            showSkip(sec < 0 ? 'left' : 'right', (sec < 0 ? '⏪ ' : '⏩ ') + Math.abs(sec) + 's');
+            showTime();
+        }
+
+        function togglePlay() {
+            if (video.paused) video.play();
+            else video.pause();
+        }
+
+        // ── Klavye ───────────────────────────────────────────────
+        window.addEventListener('keydown', (e) => {
+            // Önce ses aktivasyonu
+            if (!hasInteracted) {
+                activateSound();
+                return; // İlk tuş sadece ses açar, başka şey yapmaz!
+            }
+
+            // Resume dialog açıksa → buton navigasyonu
+            if (!resumeDialog.classList.contains('hidden')) {
+                if (e.keyCode === 37 || e.keyCode === 39) {
+                    // Sol/Sağ → butonlar arası geç
+                    if (resumeFocused === 'resume') {
+                        resumeFocused = 'restart';
+                        btnRestart.focus();
+                    } else {
+                        resumeFocused = 'resume';
+                        btnResume.focus();
+                    }
+                } else if (e.keyCode === 13) {
+                    // OK → focused butonu tıkla
+                    if (resumeFocused === 'resume') btnResume.click();
+                    else btnRestart.click();
+                }
+                return;
+            }
+
+            showTime();
+            switch(e.keyCode) {
+                case 13:  togglePlay(); break;
+                case 39: case 228: seek(10);  break;
+                case 37: case 227: seek(-10); break;
+                case 38:
+                    video.muted = false;
+                    video.volume = Math.min(1, Math.round((video.volume + 0.1) * 10) / 10);
+                    showVolume(Math.round(video.volume * 100)); break;
+                case 40:
+                    video.volume = Math.max(0, Math.round((video.volume - 0.1) * 10) / 10);
+                    showVolume(Math.round(video.volume * 100)); break;
+            }
+        });
+
+        // ── Player ───────────────────────────────────────────────
+        function stopExistingPlayers() {
+            savePosition();
+            if (hlsPlayer) { hlsPlayer.destroy(); hlsPlayer = null; }
+            if (tsPlayer)  {
+                tsPlayer.unload(); tsPlayer.detachMediaElement();
+                tsPlayer.destroy(); tsPlayer = null;
+            }
+            video.src = "";
+        }
+
+        function afterStreamLoaded() {
+            showStatus('✅ Film hazır', '#00ff00');
+            video.play().catch(() => {});
+            if (hasInteracted) { video.muted = false; video.volume = 1.0; }
+
+            // Kaydedilmiş pozisyon var mı?
+            const saved = loadPosition(currentUrl);
+            if (saved && saved.time > 10) {
+                video.pause();
+                showResumeDialog(saved.time);
+            }
+        }
+
+        function playUrl(url) {
+            stopExistingPlayers();
+            spinner.style.display = 'block';
+            const lo = url.toLowerCase();
+            const isTS = lo.includes('.ts') && !lo.includes('workers.dev');
+
+            if (isTS && mpegts.getFeatureList().mseLivePlayback) {
+                tsPlayer = mpegts.createPlayer({ type: 'mse', isLive: true, url,
+                    config: { enableWorker: true, liveBufferLatencyChasing: true }
+                });
+                tsPlayer.attachMediaElement(video);
+                tsPlayer.load();
+                video.play();
+                showStatus('✅ Yayın başladı', '#00ff00');
+
+            } else if (Hls.isSupported()) {
+                hlsPlayer = new Hls({
+                    startLevel: -1, autoStartLoad: true, startFragPrefetch: true,
+                    maxBufferLength: 60, enableWorker: true,
+                    xhrSetup: xhr => { xhr.withCredentials = false; }
+                });
+                hlsPlayer.loadSource(url);
+                hlsPlayer.attachMedia(video);
+                hlsPlayer.on(Hls.Events.MANIFEST_PARSED, afterStreamLoaded);
+                hlsPlayer.on(Hls.Events.ERROR, (e, data) => {
+                    if (data.fatal) {
+                        hlsPlayer.destroy(); hlsPlayer = null;
+                        video.src = url; video.load();
+                        video.addEventListener('canplay', afterStreamLoaded, { once: true });
+                    }
+                });
+            } else {
+                video.src = url; video.load();
+                video.addEventListener('canplay', afterStreamLoaded, { once: true });
+            }
+        }
+
+        function isDirectStream(url) {
+            const lo = url.toLowerCase();
+            return lo.includes('.m3u8') || lo.includes('.ts')  ||
+                   lo.includes('.mp4')  || lo.includes('.mkv') ||
+                   lo.includes('.avi')  || lo.includes('.gif') ||
+                   lo.includes('type=m3u_plus') || lo.includes('workers.dev');
+        }
+
+        async function startStream(url) {
+            if (!url) return;
+            currentUrl = url;
+
+            if (url.toLowerCase().includes('.txt')) {
+                try {
+                    showStatus('⏳ Link çözümleniyor...', '#ffcc00');
+                    const res  = await fetch(url);
+                    const text = (await res.text()).trim();
+                    if (text.startsWith('http')) { startStream(text.split('\n')[0].trim()); return; }
+                } catch(e) {}
+            }
+
+            if (isDirectStream(url)) { playUrl(url); return; }
+
+            showStatus('⏳ Film yükleniyor...', '#ffcc00');
+            spinner.style.display = 'block';
+            playUrl(WORKER + '?url=' + encodeURIComponent(url) + '&mode=manifest');
+        }
+
+        // ── App Inventor polling ──────────────────────────────────
+        setInterval(() => {
+            try {
+                const cmd = window.AppInventor.getWebViewString();
+                if (cmd && cmd !== lastCmd) {
+                    lastCmd = cmd;
+                    startStream(cmd);
+                }
+            } catch(e) {}
+        }, 300);
+
+        try {
+            const initUrl = window.AppInventor.getWebViewString();
+            if (initUrl) { lastCmd = initUrl; startStream(initUrl); }
+        } catch(e) {}
+    </script>
+</body>
+</html>

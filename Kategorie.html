@@ -1,0 +1,48 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+    <meta charset="UTF-8">
+    <title>Kategorie Parser</title>
+</head>
+<body>
+    <script>
+        let lastCmd = '';
+
+        function parseRawM3U(m3uText) {
+            const lines = m3uText.split('\n');
+            const seen  = new Set();
+            const cats  = [];
+            for (const line of lines) {
+                if (!line.startsWith('#EXTINF')) continue;
+                const m = line.match(/group-title="([^"]*)"/i);
+                if (m) {
+                    const cat = m[1].replace(/[\r\n\t]/g, '').trim();
+                    if (cat && !seen.has(cat)) {
+                        seen.add(cat);
+                        cats.push(cat);
+                    }
+                }
+            }
+            window.AppInventor.setWebViewString('CATEGORIES:' + cats.join('||'));
+        }
+
+        function handleCommand(cmd) {
+            if (!cmd) return;
+            if (cmd.startsWith('CATEGORIES:') || cmd.startsWith('ERROR:')) return;
+            if (cmd.startsWith('PARSE_TEXT:')) {
+                parseRawM3U(cmd.slice(11));
+            }
+        }
+
+        setInterval(() => {
+            try {
+                const cmd = window.AppInventor.getWebViewString();
+                if (cmd && cmd !== lastCmd) {
+                    lastCmd = cmd;
+                    handleCommand(cmd);
+                }
+            } catch(e) {}
+        }, 300);
+    </script>
+</body>
+</html>

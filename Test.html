@@ -1,0 +1,160 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Universal IPTV Player</title>
+    <script src="https://cdn.jsdelivr.net/npm/hls.js@latest"></script>
+    <script src="https://cdn.jsdelivr.net/npm/mpegts.js@latest/dist/mpegts.min.js"></script>
+    <style>
+        body, html { 
+            margin: 0; padding: 0; width: 100%; height: 100%; 
+            background-color: #000; overflow: hidden; 
+            display: flex; justify-content: center; align-items: center;
+        }
+        video { position: absolute; width: 100%; height: 100%; object-fit: contain; z-index: 1; }
+        #msg { 
+            position: relative; z-index: 100; color: white; 
+            font-family: sans-serif; font-size: 22px; font-weight: bold;
+            text-align: center; background: rgba(0,0,0,0.7); 
+            padding: 25px; border-radius: 15px; border: 2px solid rgba(255,255,255,0.2);
+        }
+        #dbg {
+            position: fixed; top: 8px; left: 8px; z-index: 999;
+            color: #0f0; font-family: monospace; font-size: 11px;
+            background: rgba(0,0,0,0.7); padding: 6px 10px; border-radius: 6px;
+            max-width: 500px; word-break: break-all;
+            transition: opacity 1s;
+        }
+    </style>
+</head>
+<body>
+    <video id="video" playsinline autoplay muted></video>
+    <div id="msg">Yükleniyor...</div>
+    <div id="dbg">Kategoriler yükleniyor...</div>
+
+    <script>
+        const video = document.getElementById('video');
+        const msg   = document.getElementById('msg');
+        const dbg   = document.getElementById('dbg');
+
+        let hlsPlayer = null, tsPlayer = null, hasInteracted = false;
+        let currentCmd = '';
+        let hideTimer = null;
+
+        function log(txt, hideAfterMs) {
+            dbg.style.opacity = '1';
+            dbg.textContent = txt;
+            if (hideTimer) clearTimeout(hideTimer);
+            const delay = hideAfterMs || 30000;
+            hideTimer = setTimeout(() => {
+                dbg.style.opacity = '0';
+            }, delay);
+        }
+
+        function forcePlay() {
+            hasInteracted = true;
+            video.muted = false;
+            video.volume = 1.0;
+            video.play();
+            msg.style.display = 'none';
+        }
+        window.addEventListener('keydown', forcePlay);
+        window.addEventListener('click',   forcePlay);
+
+        function stopExistingPlayers() {
+            if (hlsPlayer) { hlsPlayer.destroy(); hlsPlayer = null; }
+            if (tsPlayer)  {
+                tsPlayer.unload(); tsPlayer.detachMediaElement();
+                tsPlayer.destroy(); tsPlayer = null;
+            }
+            video.src = "";
+        }
+
+        function startStream(url) {
+            if (!url) return;
+            stopExistingPlayers();
+            const lo = url.toLowerCase();
+            const isTS     = lo.includes('.ts') || lo.includes('type=m3u_plus');
+            const isWorker = lo.includes('workers.dev');
+
+            if (isTS && mpegts.getFeatureList().mseLivePlayback) {
+                tsPlayer = mpegts.createPlayer({ type: 'mse', isLive: true, url });
+                tsPlayer.attachMediaElement(video);
+                tsPlayer.load();
+                handlePlayback();
+            } else if (!isWorker && Hls.isSupported()) {
+                hlsPlayer = new Hls({ xhrSetup: xhr => { xhr.withCredentials = false; } });
+                hlsPlayer.loadSource(url);
+                hlsPlayer.attachMedia(video);
+                hlsPlayer.on(Hls.Events.MANIFEST_PARSED, () => handlePlayback());
+                hlsPlayer.on(Hls.Events.ERROR, (e, data) => {
+                    if (data.fatal) { hlsPlayer.destroy(); video.src = url; handlePlayback(); }
+                });
+            } else {
+                video.src = url;
+                handlePlayback();
+            }
+        }
+
+        function handlePlayback() {
+            if (hasInteracted) {
+                video.muted = false; video.play();
+                msg.style.display = 'none';
+            } else {
+                video.play();
+                msg.innerHTML = 'Ses için OK tuşuna bas';
+                msg.style.display = 'block';
+            }
+        }
+
+        function parseRawM3U(m3uText) {
+            log('Kategoriler yükleniyor...', 30000);
+            const lines = m3uText.split('\n');
+            const seen  = new Set();
+            const cats  = [];
+            for (const line of lines) {
+                if (!line.startsWith('#EXTINF')) continue;
+                const m = line.match(/group-title="([^"]*)"/i);
+                if (m) {
+                    const cat = m[1].replace(/[\r\n\t]/g, '').trim();
+                    if (cat && !seen.has(cat)) {
+                        seen.add(cat);
+                        cats.push(cat);
+                    }
+                }
+            }
+            // Erfolg → nach 3 Sekunden ausblenden
+            log('Tamamlandı! ' + cats.length + ' kategori bulundu', 3000);
+            window.AppInventor.setWebViewString('CATEGORIES:' + cats.join('||'));
+        }
+
+        function handleCommand(cmd) {
+            if (!cmd) return;
+            if (cmd.startsWith('CATEGORIES:') || cmd.startsWith('ERROR:')) return;
+
+            if (cmd.startsWith('INIT:')) {
+                startStream(cmd.slice(5));
+            } else if (cmd.startsWith('PARSE_TEXT:')) {
+                parseRawM3U(cmd.slice(11));
+            } else if (cmd.startsWith('PLAY:')) {
+                startStream(cmd.slice(5));
+            } else {
+                startStream(cmd);
+            }
+        }
+
+        setInterval(() => {
+            try {
+                const cmd = window.AppInventor.getWebViewString();
+                if (cmd && cmd !== currentCmd) {
+                    currentCmd = cmd;
+                    handleCommand(cmd);
+                }
+            } catch(e) {
+                log('Hata: ' + e.message, 10000);
+            }
+        }, 300);
+    </script>
+</body>
+</html>

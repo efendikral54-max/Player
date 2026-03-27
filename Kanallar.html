@@ -1,0 +1,83 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+    <meta charset="UTF-8">
+    <title>Kanallar Parser</title>
+</head>
+<body>
+    <script>
+        let lastCmd = '';
+        let pendingNames = null;
+        let pendingUrls  = null;
+        let step = 0;
+        let ready = false; // JS ist bereit
+
+        function parseChannels(text) {
+            const sep      = text.indexOf('|||');
+            const category = text.slice(0, sep);
+            const m3uText  = text.slice(sep + 3);
+
+            const lines = m3uText.split('\n');
+            const names = [];
+            const urls  = [];
+
+            for (let i = 0; i < lines.length; i++) {
+                const line = lines[i];
+                if (!line.startsWith('#EXTINF')) continue;
+                const m = line.match(/group-title="([^"]*)"/i);
+                if (!m || m[1].replace(/[\r\n\t]/g, '').trim() !== category) continue;
+
+                const parts = line.split(',');
+                const name  = parts[parts.length - 1].replace(/[\r\n\t]/g, '').trim();
+
+                let url = '';
+                for (let j = i + 1; j < lines.length; j++) {
+                    const next = lines[j].trim();
+                    if (next && !next.startsWith('#')) { url = next; break; }
+                }
+                if (name && url) {
+                    names.push(name);
+                    urls.push(url);
+                }
+            }
+
+            pendingNames = names.join('||');
+            pendingUrls  = urls.join('||');
+            step = 1;
+            window.AppInventor.setWebViewString('NAMES:' + pendingNames);
+        }
+
+        function handleCommand(cmd) {
+            if (!cmd) return;
+
+            if (cmd === 'READY_FOR_URLS' && step === 1) {
+                step = 2;
+                window.AppInventor.setWebViewString('URLS:' + pendingUrls);
+                return;
+            }
+
+            if (cmd === 'DONE') return;
+            if (cmd.startsWith('NAMES:') || cmd.startsWith('URLS:')) return;
+            if (cmd.startsWith('ERROR:')) return;
+
+            if (cmd.startsWith('PARSE_CHANNELS:')) {
+                parseChannels(cmd.slice(15));
+            }
+        }
+
+        // JS meldet sich bereit an App
+        window.AppInventor.setWebViewString('JS_READY');
+
+        // Schnelles Polling — 100ms
+        setInterval(() => {
+            try {
+                const cmd = window.AppInventor.getWebViewString();
+                if (cmd && cmd !== lastCmd) {
+                    lastCmd = cmd;
+                    handleCommand(cmd);
+                }
+            } catch(e) {}
+        }, 100);
+    </script>
+</body>
+</html>
