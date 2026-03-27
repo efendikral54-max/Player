@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Universal IPTV Player</title>
+    <title>Universal IPTV Player Pro</title>
     <script src="https://cdn.jsdelivr.net/npm/hls.js@latest"></script>
     <script src="https://cdn.jsdelivr.net/npm/mpegts.js@latest/dist/mpegts.min.js"></script>
     <style>
@@ -13,133 +13,197 @@
             display: flex; justify-content: center; align-items: center;
         }
         video { position: absolute; width: 100%; height: 100%; object-fit: contain; z-index: 1; }
+        
+        /* 4. Visuelles Feedback: Roter Spinner */
+        #spinner { 
+            position: fixed; top: 50%; left: 50%; transform: translate(-50%,-50%); 
+            z-index: 300; width: 60px; height: 60px; 
+            border: 5px solid rgba(255,255,255,0.2); border-top: 5px solid #e50914; 
+            border-radius: 50%; display: none; animation: spin 0.8s linear infinite; 
+        }
+        @keyframes spin { to { transform: translate(-50%,-50%) rotate(360deg); } }
+
+        /* 4. Türkische Fehlermeldungen */
         #msg { 
             position: relative; z-index: 100; color: white; 
-            font-family: sans-serif; font-size: 22px; font-weight: bold;
-            text-align: center; background: rgba(0,0,0,0.7); 
-            padding: 25px; border-radius: 15px; border: 2px solid rgba(255,255,255,0.2);
+            font-family: sans-serif; font-size: 20px; font-weight: bold;
+            text-align: center; background: rgba(0,0,0,0.8); 
+            padding: 20px 30px; border-radius: 12px; border: 2px solid #e50914;
+            display: none; max-width: 80%; line-height: 1.4;
         }
+
         #dbg {
             position: fixed; top: 8px; left: 8px; z-index: 999;
             color: #0f0; font-family: monospace; font-size: 11px;
-            background: rgba(0,0,0,0.7); padding: 6px 10px; border-radius: 6px;
-            max-width: 500px; word-break: break-all;
-            transition: opacity 1s;
+            background: rgba(0,0,0,0.8); padding: 8px 12px; border-radius: 6px;
+            border: 1px solid #0f0; max-width: 80%; transition: opacity 1s; opacity: 0;
         }
     </style>
 </head>
 <body>
     <video id="video" playsinline autoplay muted></video>
-    <div id="msg">Yükleniyor...</div>
-    <div id="dbg">Kategoriler yükleniyor...</div>
+    <div id="spinner"></div>
+    <div id="msg"></div>
+    <div id="dbg">Sistem Hazır</div>
 
     <script>
-        const video = document.getElementById('video');
-        const msg   = document.getElementById('msg');
-        const dbg   = document.getElementById('dbg');
+        const video   = document.getElementById('video');
+        const msg     = document.getElementById('msg');
+        const dbg     = document.getElementById('dbg');
+        const spinner = document.getElementById('spinner');
 
         let hlsPlayer = null, tsPlayer = null, hasInteracted = false;
         let currentCmd = '';
-        let hideTimer = null;
 
-        function log(txt, hideAfterMs) {
-            dbg.style.opacity = '1';
-            dbg.textContent = txt;
-            if (hideTimer) clearTimeout(hideTimer);
-            const delay = hideAfterMs || 30000;
-            hideTimer = setTimeout(() => {
-                dbg.style.opacity = '0';
-            }, delay);
+        function log(txt, hideAfter) {
+            dbg.style.opacity = '1'; dbg.textContent = txt;
+            if (hideAfter) setTimeout(() => { dbg.style.opacity = '0'; }, hideAfter);
         }
 
-        function forcePlay() {
-            hasInteracted = true;
-            video.muted = false;
-            video.volume = 1.0;
-            video.play();
+        function showError(text) {
+            spinner.style.display = 'none';
+            msg.innerHTML = text;
+            msg.style.display = 'block';
+        }
+
+        function hideError() {
             msg.style.display = 'none';
         }
-        window.addEventListener('keydown', forcePlay);
-        window.addEventListener('click',   forcePlay);
 
+        // ==========================================
+        // 1. PERFORMANCE BOOST: WEB WORKER (Parsing)
+        // ==========================================
+        const workerCode = `
+            self.onmessage = function(e) {
+                const lines = e.data.split('\\n');
+                const seen = new Set();
+                const cats = [];
+                for (let i = 0; i < lines.length; i++) {
+                    const line = lines[i].trim();
+                    if (!line.startsWith('#EXTINF')) continue;
+                    const m = line.match(/group-title="([^"]*)"/i);
+                    if (m) {
+                        const cat = m[1].replace(/[\\r\\n\\t]/g, '').trim();
+                        if (cat && !seen.has(cat)) { seen.add(cat); cats.push(cat); }
+                    }
+                }
+                self.postMessage(cats.join('||'));
+            };
+        `;
+
+        const blob = new Blob([workerCode], { type: 'application/javascript' });
+        const worker = new Worker(URL.createObjectURL(blob));
+
+        worker.onmessage = function(e) {
+            spinner.style.display = 'none';
+            log('Liste başarıyla yüklendi!', 3000);
+            window.AppInventor.setWebViewString('CATEGORIES:' + e.data);
+        };
+
+        // ==========================================
+        // 2. SMARTE STREAM ERKENNUNG
+        // ==========================================
         function stopExistingPlayers() {
             if (hlsPlayer) { hlsPlayer.destroy(); hlsPlayer = null; }
-            if (tsPlayer)  {
-                tsPlayer.unload(); tsPlayer.detachMediaElement();
-                tsPlayer.destroy(); tsPlayer = null;
-            }
-            video.src = "";
+            if (tsPlayer)  { tsPlayer.unload(); tsPlayer.detachMediaElement(); tsPlayer.destroy(); tsPlayer = null; }
+            video.src = ""; video.load();
         }
 
-        function startStream(url) {
+        async function startStream(url) {
             if (!url) return;
             stopExistingPlayers();
-            const lo = url.toLowerCase();
-            const isTS     = lo.includes('.ts') || lo.includes('type=m3u_plus');
-            const isWorker = lo.includes('workers.dev');
+            hideError();
+            spinner.style.display = 'block';
 
+            // TXT Datei auslesen (Für URLs wie vidrame.pro/.../1080.txt)
+            if (url.toLowerCase().endsWith('.txt')) {
+                log('.txt linki çözümleniyor...', 2000);
+                try {
+                    let response = await fetch(url);
+                    let textUrl = await response.text();
+                    textUrl = textUrl.trim().split('\n')[0]; 
+                    if (textUrl.startsWith('http')) {
+                        startStream(textUrl); // Echten Link starten
+                        return;
+                    } else {
+                        throw new Error("Geçersiz TXT içeriği");
+                    }
+                } catch(e) { 
+                    showError('Bağlantı çözümlenemedi.<br><span style="font-size:14px;color:#aaa;">(Güvenlik duvarı veya ölü link)</span>');
+                    return; 
+                }
+            }
+
+            const lo = url.toLowerCase();
+            const isTS = lo.includes('.ts') || lo.includes('extension=ts') || lo.includes('live.php') || lo.includes('type=m3u_plus') || lo.includes('mac=');
+
+            // MPEG-TS Player (Für sup-4k etc.)
             if (isTS && mpegts.getFeatureList().mseLivePlayback) {
-                tsPlayer = mpegts.createPlayer({ type: 'mse', isLive: true, url });
+                log('MPEG-TS Modu aktif');
+                tsPlayer = mpegts.createPlayer({ type: 'mse', isLive: true, url: url });
                 tsPlayer.attachMediaElement(video);
                 tsPlayer.load();
-                handlePlayback();
-            } else if (!isWorker && Hls.isSupported()) {
-                hlsPlayer = new Hls({ xhrSetup: xhr => { xhr.withCredentials = false; } });
+                tsPlayer.on(mpegts.Events.MEDIA_INFO, () => { spinner.style.display = 'none'; handlePlayback(); });
+                tsPlayer.on(mpegts.Events.ERROR, (e) => { 
+                    showError('Yayın şu an çevrimdışı veya desteklenmiyor.'); 
+                });
+            } 
+            // HLS Player (Für .m3u8, .css, .gif, Cloudflare Workers)
+            else if (Hls.isSupported()) {
+                log('HLS Modu aktif');
+                hlsPlayer = new Hls({ xhrSetup: function(xhr) { xhr.withCredentials = false; }});
                 hlsPlayer.loadSource(url);
                 hlsPlayer.attachMedia(video);
-                hlsPlayer.on(Hls.Events.MANIFEST_PARSED, () => handlePlayback());
-                hlsPlayer.on(Hls.Events.ERROR, (e, data) => {
-                    if (data.fatal) { hlsPlayer.destroy(); video.src = url; handlePlayback(); }
+                hlsPlayer.on(Hls.Events.MANIFEST_PARSED, () => { spinner.style.display = 'none'; handlePlayback(); });
+                hlsPlayer.on(Hls.Events.ERROR, function(event, data) {
+                    if (data.fatal) {
+                        hlsPlayer.destroy(); hlsPlayer = null;
+                        log('HLS hatası, direkt deneme yapılıyor...');
+                        // Fallback auf direkten Player
+                        video.src = url;
+                        video.oncanplay = () => { spinner.style.display = 'none'; handlePlayback(); };
+                        video.onerror   = () => { showError('Yayın oynatılamadı. Sunucu yanıt vermiyor.'); };
+                    }
                 });
             } else {
+                // Letzter Ausweg (Standard HTML5 Video)
                 video.src = url;
-                handlePlayback();
+                video.oncanplay = () => { spinner.style.display = 'none'; handlePlayback(); };
+                video.onerror   = () => { showError('Bu video formatı tarayıcınız tarafından desteklenmiyor.'); };
             }
         }
 
         function handlePlayback() {
             if (hasInteracted) {
-                video.muted = false; video.play();
-                msg.style.display = 'none';
+                video.muted = false; 
+                video.play().catch(() => showError('Otomatik oynatma tarayıcı tarafından engellendi.'));
             } else {
-                video.play();
-                msg.innerHTML = 'Ses için OK tuşuna bas';
-                msg.style.display = 'block';
+                video.play().catch(()=>{});
+                showError('Sesi açmak için ekrana dokunun');
             }
         }
 
-        function parseRawM3U(m3uText) {
-            log('Kategoriler yükleniyor...', 30000);
-            const lines = m3uText.split('\n');
-            const seen  = new Set();
-            const cats  = [];
-            for (const line of lines) {
-                if (!line.startsWith('#EXTINF')) continue;
-                const m = line.match(/group-title="([^"]*)"/i);
-                if (m) {
-                    const cat = m[1].replace(/[\r\n\t]/g, '').trim();
-                    if (cat && !seen.has(cat)) {
-                        seen.add(cat);
-                        cats.push(cat);
-                    }
-                }
+        // Klick auf den Bildschirm (Aktiviert Ton und entfernt Fehlermeldungen)
+        window.addEventListener('click', () => { 
+            hasInteracted = true; 
+            if(video.src || hlsPlayer || tsPlayer) {
+                video.muted = false; video.play(); hideError(); 
             }
-            // Erfolg → nach 3 Sekunden ausblenden
-            log('Tamamlandı! ' + cats.length + ' kategori bulundu', 3000);
-            window.AppInventor.setWebViewString('CATEGORIES:' + cats.join('||'));
-        }
+        });
 
+        // ==========================================
+        // BEFEHLE VON APP INVENTOR
+        // ==========================================
         function handleCommand(cmd) {
-            if (!cmd) return;
-            if (cmd.startsWith('CATEGORIES:') || cmd.startsWith('ERROR:')) return;
+            if (!cmd || cmd.startsWith('CATEGORIES:')) return;
 
-            if (cmd.startsWith('INIT:')) {
-                startStream(cmd.slice(5));
-            } else if (cmd.startsWith('PARSE_TEXT:')) {
-                parseRawM3U(cmd.slice(11));
+            if (cmd.startsWith('PARSE_TEXT:')) {
+                hideError();
+                spinner.style.display = 'block'; // Zeige Ladekreis beim Parsen
+                worker.postMessage(cmd.slice(11));
             } else if (cmd.startsWith('PLAY:')) {
                 startStream(cmd.slice(5));
-            } else {
+            } else if (cmd.includes('://')) {
                 startStream(cmd);
             }
         }
@@ -151,9 +215,7 @@
                     currentCmd = cmd;
                     handleCommand(cmd);
                 }
-            } catch(e) {
-                log('Hata: ' + e.message, 10000);
-            }
+            } catch(e) {}
         }, 300);
     </script>
 </body>
