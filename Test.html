@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Universal IPTV Player Pro</title>
+    <title>Universal IPTV Player</title>
     <script src="https://cdn.jsdelivr.net/npm/hls.js@latest"></script>
     <script src="https://cdn.jsdelivr.net/npm/mpegts.js@latest/dist/mpegts.min.js"></script>
     <style>
@@ -13,35 +13,21 @@
             display: flex; justify-content: center; align-items: center;
         }
         video { position: absolute; width: 100%; height: 100%; object-fit: contain; z-index: 1; }
-        
-        /* Spinner */
-        #spinner {
-            position: fixed; top: 50%; left: 50%; transform: translate(-50%,-50%);
-            z-index: 300; width: 60px; height: 60px;
-            border: 5px solid rgba(255,255,255,0.2);
-            border-top: 5px solid #e50914; border-radius: 50%;
-            display: none; animation: spin 0.8s linear infinite;
-        }
-        @keyframes spin { to { transform: translate(-50%,-50%) rotate(360deg); } }
-
-        /* Nachrichten */
         #msg { 
             position: relative; z-index: 100; color: white; 
             font-family: sans-serif; font-size: 22px; font-weight: bold;
             text-align: center; background: rgba(0,0,0,0.7); 
             padding: 25px; border-radius: 15px; border: 2px solid rgba(255,255,255,0.2);
-            display: none;
         }
-
-        /* Debug Fenster */
         #dbg {
             position: fixed; top: 8px; left: 8px; z-index: 999;
             color: #0f0; font-family: monospace; font-size: 11px;
             background: rgba(0,0,0,0.7); padding: 6px 10px; border-radius: 6px;
-            max-width: 500px; word-break: break-all; display: block;
+            max-width: 500px; word-break: break-all;
+            transition: opacity 1s;
         }
 
-        /* NEUE SENDER-VORSCHAU BOX */
+        /* NEU: CSS für die Sender-Vorschau */
         #channelInfo {
             position: fixed; bottom: 50px; left: 50%; transform: translateX(-50%);
             z-index: 200; color: white; font-family: sans-serif;
@@ -53,11 +39,9 @@
     </style>
 </head>
 <body>
-
     <video id="video" playsinline autoplay muted></video>
-    <div id="spinner"></div>
-    <div id="msg"></div>
-    <div id="dbg">Sistem hazır...</div>
+    <div id="msg">Yükleniyor...</div>
+    <div id="dbg">Kategoriler yükleniyor...</div>
 
     <div id="channelInfo">
         <div id="prevShow" style="font-size: 14px; color: #aaa; font-style: italic;"></div>
@@ -67,38 +51,91 @@
 
     <script>
         const video = document.getElementById('video');
-        const spinner = document.getElementById('spinner');
-        const msg = document.getElementById('msg');
-        const dbg = document.getElementById('dbg');
+        const msg   = document.getElementById('msg');
+        const dbg   = document.getElementById('dbg');
         const channelInfoBox = document.getElementById('channelInfo');
-        
-        let hlsPlayer = null;
-        let tsPlayer = null;
-        let currentCmd = "";
-        let urlList = [];
-        let nameList = [];
-        let currentIndex = 0;
-        let infoTimer = null;
-        let hasInteracted = false;
 
-        function log(m, timeout = 5000) {
-            dbg.innerText = m;
-            console.log(m);
-            if(timeout > 0) setTimeout(() => { if(dbg.innerText === m) dbg.innerText = ''; }, timeout);
+        let hlsPlayer = null, tsPlayer = null, hasInteracted = false;
+        let currentCmd = '';
+        let hideTimer = null;
+
+        // NEU: Variablen für Zapping
+        let urlList = [], nameList = [], currentIndex = 0, infoTimer = null;
+
+        function log(txt, hideAfterMs) {
+            dbg.style.opacity = '1';
+            dbg.textContent = txt;
+            if (hideTimer) clearTimeout(hideTimer);
+            const delay = hideAfterMs || 30000;
+            hideTimer = setTimeout(() => {
+                dbg.style.opacity = '0';
+            }, delay);
         }
 
-        function showError(m) {
-            msg.innerHTML = m;
-            msg.style.display = 'block';
-            spinner.style.display = 'none';
-        }
-
-        function hideError() {
+        function forcePlay() {
+            hasInteracted = true;
+            video.muted = false;
+            video.volume = 1.0;
+            video.play();
             msg.style.display = 'none';
         }
 
-        // HIER IST DIE FUNKTION: Zeigt Vorherigen, Aktuellen und Nächsten Sender
-        function showChannelInfo(name, index) {
+        // NEU: Erweiterte Tastensteuerung für Zapping (Pfeiltasten)
+        window.addEventListener('keydown', (e) => {
+            forcePlay();
+            if (e.key === 'ArrowUp') handleZapping('up');
+            if (e.key === 'ArrowDown') handleZapping('down');
+        });
+        window.addEventListener('click', forcePlay);
+
+        function stopExistingPlayers() {
+            if (hlsPlayer) { hlsPlayer.destroy(); hlsPlayer = null; }
+            if (tsPlayer)  {
+                tsPlayer.unload(); tsPlayer.detachMediaElement();
+                tsPlayer.destroy(); tsPlayer = null;
+            }
+            video.src = "";
+        }
+
+        function startStream(url) {
+            if (!url) return;
+            stopExistingPlayers();
+            const lo = url.toLowerCase();
+            const isTS     = lo.includes('.ts') || lo.includes('type=m3u_plus') || lo.includes('extension=ts');
+            const isWorker = lo.includes('workers.dev');
+
+            if (isTS && mpegts.getFeatureList().mseLivePlayback) {
+                tsPlayer = mpegts.createPlayer({ type: 'mse', isLive: true, url });
+                tsPlayer.attachMediaElement(video);
+                tsPlayer.load();
+                handlePlayback();
+            } else if (!isWorker && Hls.isSupported()) {
+                hlsPlayer = new Hls({ xhrSetup: xhr => { xhr.withCredentials = false; } });
+                hlsPlayer.loadSource(url);
+                hlsPlayer.attachMedia(video);
+                hlsPlayer.on(Hls.Events.MANIFEST_PARSED, () => handlePlayback());
+                hlsPlayer.on(Hls.Events.ERROR, (e, data) => {
+                    if (data.fatal) { hlsPlayer.destroy(); video.src = url; handlePlayback(); }
+                });
+            } else {
+                video.src = url;
+                handlePlayback();
+            }
+        }
+
+        function handlePlayback() {
+            if (hasInteracted) {
+                video.muted = false; video.play();
+                msg.style.display = 'none';
+            } else {
+                video.play();
+                msg.innerHTML = 'Ses için OK tuşuna bas';
+                msg.style.display = 'block';
+            }
+        }
+
+        // NEU: Funktion zur Anzeige von Vorheriger - Aktueller - Nächster Sender
+        function showChannelInfo() {
             if (nameList.length === 0) return;
 
             const total = nameList.length;
@@ -117,79 +154,43 @@
             }, 4000);
         }
 
-        function startStream(url) {
-            if (!url) return;
-            log("Yükleniyor: " + url);
-            hideError();
-            spinner.style.display = 'block';
-
-            if (hlsPlayer) { hlsPlayer.destroy(); hlsPlayer = null; }
-            if (tsPlayer) { tsPlayer.destroy(); tsPlayer = null; video.pause(); }
-
-            const isTS = url.toLowerCase().includes('extension=ts') || url.toLowerCase().includes('.ts') || url.toLowerCase().includes('live.php');
-
-            if (isTS && mpegts.getFeatureList().mse) {
-                tsPlayer = mpegts.createPlayer({ type: 'mse', url: url, isLive: true });
-                tsPlayer.attachMediaElement(video);
-                tsPlayer.load();
-                tsPlayer.play().catch(e => log("TS Play Hata"));
-            } 
-            else if (video.canPlayType('application/vnd.apple.mpegurl')) {
-                video.src = url;
-            } 
-            else if (Hls.isSupported()) {
-                hlsPlayer = new Hls();
-                hlsPlayer.loadSource(url);
-                hlsPlayer.attachMedia(video);
-            } 
-            else {
-                showError("Format desteklenmiyor.");
-            }
-        }
-
-        video.onplaying = () => { spinner.style.display = 'none'; hideError(); };
-        video.onerror = () => { showError("Yayın hatası veya link geçersiz."); };
-
+        // NEU: Senderwechsel Funktion
         function handleZapping(direction) {
             if (urlList.length === 0) return;
             if (direction === 'up') currentIndex = (currentIndex - 1 + urlList.length) % urlList.length;
             else currentIndex = (currentIndex + 1) % urlList.length;
             
             startStream(urlList[currentIndex]);
-            showChannelInfo(nameList[currentIndex] || '?', currentIndex);
+            showChannelInfo();
+            // Rückmeldung an App Inventor über den neuen Index
             window.AppInventor.setWebViewString('INDEX:' + currentIndex);
         }
 
-        window.addEventListener('keydown', (e) => {
-            if (e.key === 'ArrowUp' || e.key === 'ChannelUp') handleZapping('up');
-            if (e.key === 'ArrowDown' || e.key === 'ChannelDown') handleZapping('down');
-            if (e.key === 'Enter' || e.key === 'OK') {
-                hasInteracted = true;
-                video.muted = false;
-                video.play();
-                showChannelInfo(nameList[currentIndex] || '?', currentIndex);
-            }
-        });
-
-        function parseRawM3U(data) {
-            const lines = data.split(/\r?\n/);
-            const cats = [];
-            const seen = new Set();
-            for (let line of lines) {
-                if (line.includes('group-title="')) {
-                    const match = line.match(/group-title="([^"]+)"/);
-                    if (match && !seen.has(match[1])) {
-                        seen.add(match[1]);
-                        cats.push(match[1]);
+        function parseRawM3U(m3uText) {
+            log('Kategoriler yükleniyor...', 30000);
+            const lines = m3uText.split('\n');
+            const seen  = new Set();
+            const cats  = [];
+            for (const line of lines) {
+                if (!line.startsWith('#EXTINF')) continue;
+                const m = line.match(/group-title="([^"]*)"/i);
+                if (m) {
+                    const cat = m[1].replace(/[\r\n\t]/g, '').trim();
+                    if (cat && !seen.has(cat)) {
+                        seen.add(cat);
+                        cats.push(cat);
                     }
                 }
             }
+            log('Tamamlandı! ' + cats.length + ' kategori bulundu', 3000);
             window.AppInventor.setWebViewString('CATEGORIES:' + cats.join('||'));
         }
 
         function handleCommand(cmd) {
-            if (!cmd || cmd.startsWith('CATEGORIES:') || cmd.startsWith('ERROR:') || cmd.startsWith('INDEX:')) return;
+            if (!cmd) return;
+            if (cmd.startsWith('CATEGORIES:') || cmd.startsWith('ERROR:') || cmd.startsWith('INDEX:')) return;
 
+            // NEU: Unterstützung für SETLIST (URLs, Namen und Start-Index)
             if (cmd.startsWith('SETLIST:')) {
                 const parts = cmd.slice(8).split('~~~');
                 urlList = parts[0] ? parts[0].split('||') : [];
@@ -197,7 +198,7 @@
                 currentIndex = parts[2] ? parseInt(parts[2]) : 0;
                 if (urlList[currentIndex]) {
                     startStream(urlList[currentIndex]);
-                    showChannelInfo(nameList[currentIndex] || '?', currentIndex);
+                    showChannelInfo();
                 }
             } 
             else if (cmd.startsWith('INIT:')) {
@@ -206,7 +207,7 @@
                 parseRawM3U(cmd.slice(11));
             } else if (cmd.startsWith('PLAY:')) {
                 startStream(cmd.slice(5));
-            } else if (cmd.includes('://')) {
+            } else {
                 startStream(cmd);
             }
         }
@@ -222,8 +223,6 @@
                 log('Hata: ' + e.message, 10000);
             }
         }, 300);
-
-        window.addEventListener('click', () => { hasInteracted = true; video.muted = false; video.play(); });
     </script>
 </body>
 </html>
