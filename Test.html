@@ -14,7 +14,7 @@
         }
         video { position: absolute; width: 100%; height: 100%; object-fit: contain; z-index: 1; }
         
-        /* Lade-Spinner */
+        /* Spinner */
         #spinner {
             position: fixed; top: 50%; left: 50%; transform: translate(-50%,-50%);
             z-index: 300; width: 60px; height: 60px;
@@ -24,7 +24,7 @@
         }
         @keyframes spin { to { transform: translate(-50%,-50%) rotate(360deg); } }
 
-        /* Nachrichten & Fehler */
+        /* Nachrichten */
         #msg { 
             position: relative; z-index: 100; color: white; 
             font-family: sans-serif; font-size: 22px; font-weight: bold;
@@ -41,21 +41,14 @@
             max-width: 500px; word-break: break-all; display: block;
         }
 
-        /* NEUE SENDER-INFO BAR (3 Zeilen) */
+        /* NEUE SENDER-VORSCHAU BOX */
         #channelInfo {
             position: fixed; bottom: 50px; left: 50%; transform: translateX(-50%);
             z-index: 200; color: white; font-family: sans-serif;
             background: rgba(0,0,0,0.85); padding: 15px 30px;
             border-radius: 20px; border: 2px solid #e50914;
             display: none; flex-direction: column; align-items: center;
-            min-width: 450px; transition: opacity 0.5s; opacity: 0;
-        }
-        .chan-row { width: 100%; display: flex; justify-content: center; margin: 2px 0; }
-        .prev-next { font-size: 15px; color: #aaa; font-style: italic; opacity: 0.7; }
-        .current { 
-            font-size: 24px; font-weight: bold; color: #fff; 
-            margin: 8px 0; border-top: 1px solid #444; border-bottom: 1px solid #444; 
-            padding: 8px 0; width: 100%; text-align: center; 
+            min-width: 400px; text-align: center;
         }
     </style>
 </head>
@@ -64,12 +57,12 @@
     <video id="video" playsinline autoplay muted></video>
     <div id="spinner"></div>
     <div id="msg"></div>
-    <div id="dbg">System bereit...</div>
+    <div id="dbg">Sistem hazır...</div>
 
     <div id="channelInfo">
-        <div class="chan-row prev-next" id="prevChan"></div>
-        <div class="current" id="currChan"></div>
-        <div class="chan-row prev-next" id="nextChan"></div>
+        <div id="prevShow" style="font-size: 14px; color: #aaa; font-style: italic;"></div>
+        <div id="currShow" style="font-size: 24px; font-weight: bold; margin: 8px 0; border-top: 1px solid #444; border-bottom: 1px solid #444; padding: 5px 0; width: 100%;"></div>
+        <div id="nextShow" style="font-size: 14px; color: #aaa; font-style: italic;"></div>
     </div>
 
     <script>
@@ -77,7 +70,7 @@
         const spinner = document.getElementById('spinner');
         const msg = document.getElementById('msg');
         const dbg = document.getElementById('dbg');
-        const channelInfo = document.getElementById('channelInfo');
+        const channelInfoBox = document.getElementById('channelInfo');
         
         let hlsPlayer = null;
         let tsPlayer = null;
@@ -104,49 +97,42 @@
             msg.style.display = 'none';
         }
 
-        // SENDER-INFO ANZEIGEN (3-Zeilen Logik)
-        function showChannelInfo() {
+        // HIER IST DIE FUNKTION: Zeigt Vorherigen, Aktuellen und Nächsten Sender
+        function showChannelInfo(name, index) {
             if (nameList.length === 0) return;
 
-            // Indizes berechnen (mit Loop-Schutz)
             const total = nameList.length;
             const prevIdx = (currentIndex - 1 + total) % total;
             const nextIdx = (currentIndex + 1) % total;
 
-            // Texte in die Felder schreiben
-            document.getElementById('prevChan').textContent = "⬅ " + nameList[prevIdx];
-            document.getElementById('currChan').textContent = (currentIndex + 1) + ". " + nameList[currentIndex];
-            document.getElementById('nextChan').textContent = "➡ " + nameList[nextIdx];
+            document.getElementById('prevShow').textContent = "⬅ " + nameList[prevIdx];
+            document.getElementById('currShow').textContent = (currentIndex + 1) + ". " + nameList[currentIndex];
+            document.getElementById('nextShow').textContent = "➡ " + nameList[nextIdx];
 
-            // Einblenden
-            channelInfo.style.display = 'flex';
-            setTimeout(() => { channelInfo.style.opacity = '1'; }, 10);
+            channelInfoBox.style.display = 'flex';
 
-            // Nach 4 Sekunden wieder ausblenden
             if (infoTimer) clearTimeout(infoTimer);
             infoTimer = setTimeout(() => {
-                channelInfo.style.opacity = '0';
-                setTimeout(() => { channelInfo.style.display = 'none'; }, 500);
+                channelInfoBox.style.display = 'none';
             }, 4000);
         }
 
         function startStream(url) {
             if (!url) return;
-            log("Lade: " + url);
+            log("Yükleniyor: " + url);
             hideError();
             spinner.style.display = 'block';
 
             if (hlsPlayer) { hlsPlayer.destroy(); hlsPlayer = null; }
             if (tsPlayer) { tsPlayer.destroy(); tsPlayer = null; video.pause(); }
 
-            // Spezial-Check für sup-4k.org / MPEG-TS
             const isTS = url.toLowerCase().includes('extension=ts') || url.toLowerCase().includes('.ts') || url.toLowerCase().includes('live.php');
 
             if (isTS && mpegts.getFeatureList().mse) {
                 tsPlayer = mpegts.createPlayer({ type: 'mse', url: url, isLive: true });
                 tsPlayer.attachMediaElement(video);
                 tsPlayer.load();
-                tsPlayer.play().catch(e => log("TS Play Error"));
+                tsPlayer.play().catch(e => log("TS Play Hata"));
             } 
             else if (video.canPlayType('application/vnd.apple.mpegurl')) {
                 video.src = url;
@@ -157,25 +143,23 @@
                 hlsPlayer.attachMedia(video);
             } 
             else {
-                showError("Format wird nicht unterstützt.");
+                showError("Format desteklenmiyor.");
             }
         }
 
         video.onplaying = () => { spinner.style.display = 'none'; hideError(); };
-        video.onerror = () => { showError("Stream-Fehler oder Link abgelaufen."); };
+        video.onerror = () => { showError("Yayın hatası veya link geçersiz."); };
 
-        // ZAPPING LOGIK
         function handleZapping(direction) {
             if (urlList.length === 0) return;
             if (direction === 'up') currentIndex = (currentIndex - 1 + urlList.length) % urlList.length;
             else currentIndex = (currentIndex + 1) % urlList.length;
             
             startStream(urlList[currentIndex]);
-            showChannelInfo(); // Nutzt jetzt die neue 3-Zeilen Anzeige
+            showChannelInfo(nameList[currentIndex] || '?', currentIndex);
             window.AppInventor.setWebViewString('INDEX:' + currentIndex);
         }
 
-        // TASTEN-STEUERUNG (TV Fernbedienung)
         window.addEventListener('keydown', (e) => {
             if (e.key === 'ArrowUp' || e.key === 'ChannelUp') handleZapping('up');
             if (e.key === 'ArrowDown' || e.key === 'ChannelDown') handleZapping('down');
@@ -183,37 +167,10 @@
                 hasInteracted = true;
                 video.muted = false;
                 video.play();
-                showChannelInfo();
+                showChannelInfo(nameList[currentIndex] || '?', currentIndex);
             }
         });
 
-        // BEFEHLE VON APP INVENTOR VERARBEITEN
-        function handleCommand(cmd) {
-            if (!cmd || cmd.startsWith('CATEGORIES:') || cmd.startsWith('INDEX:')) return;
-
-            if (cmd.startsWith('SETLIST:')) {
-                const parts = cmd.slice(8).split('~~~');
-                urlList = parts[0] ? parts[0].split('||') : [];
-                nameList = parts[1] ? parts[1].split('||') : [];
-                currentIndex = parts[2] ? parseInt(parts[2]) : 0;
-                
-                if (urlList[currentIndex]) {
-                    startStream(urlList[currentIndex]);
-                    showChannelInfo();
-                }
-            } 
-            else if (cmd.startsWith('PARSE_TEXT:')) {
-                parseRawM3U(cmd.slice(11));
-            } 
-            else if (cmd.startsWith('PLAY:')) {
-                startStream(cmd.slice(5));
-            } 
-            else if (cmd.includes('://')) {
-                startStream(cmd);
-            }
-        }
-
-        // M3U PARSER (Extrahiert Kategorien für die App)
         function parseRawM3U(data) {
             const lines = data.split(/\r?\n/);
             const cats = [];
@@ -230,7 +187,30 @@
             window.AppInventor.setWebViewString('CATEGORIES:' + cats.join('||'));
         }
 
-        // WebViewString Überwachung
+        function handleCommand(cmd) {
+            if (!cmd || cmd.startsWith('CATEGORIES:') || cmd.startsWith('ERROR:') || cmd.startsWith('INDEX:')) return;
+
+            if (cmd.startsWith('SETLIST:')) {
+                const parts = cmd.slice(8).split('~~~');
+                urlList = parts[0] ? parts[0].split('||') : [];
+                nameList = parts[1] ? parts[1].split('||') : [];
+                currentIndex = parts[2] ? parseInt(parts[2]) : 0;
+                if (urlList[currentIndex]) {
+                    startStream(urlList[currentIndex]);
+                    showChannelInfo(nameList[currentIndex] || '?', currentIndex);
+                }
+            } 
+            else if (cmd.startsWith('INIT:')) {
+                startStream(cmd.slice(5));
+            } else if (cmd.startsWith('PARSE_TEXT:')) {
+                parseRawM3U(cmd.slice(11));
+            } else if (cmd.startsWith('PLAY:')) {
+                startStream(cmd.slice(5));
+            } else if (cmd.includes('://')) {
+                startStream(cmd);
+            }
+        }
+
         setInterval(() => {
             try {
                 const cmd = window.AppInventor.getWebViewString();
@@ -238,7 +218,9 @@
                     currentCmd = cmd;
                     handleCommand(cmd);
                 }
-            } catch(e) {}
+            } catch(e) {
+                log('Hata: ' + e.message, 10000);
+            }
         }, 300);
 
         window.addEventListener('click', () => { hasInteracted = true; video.muted = false; video.play(); });
