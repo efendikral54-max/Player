@@ -23,7 +23,8 @@
             position: fixed; top: 8px; left: 8px; z-index: 999;
             color: #0f0; font-family: monospace; font-size: 11px;
             background: rgba(0,0,0,0.8); padding: 8px 12px; border-radius: 6px;
-            border: 1px solid #0f0; max-width: 80%; transition: opacity 1s;
+            border: 1px solid #0f0; max-width: 80%;
+            transition: opacity 1s;
         }
     </style>
 </head>
@@ -40,71 +41,64 @@
         let hlsPlayer = null, tsPlayer = null, hasInteracted = false;
         let currentCmd = '';
 
-        // --- WEB WORKER CODE (Nur Kategorien extrahieren) ---
-        const workerCode = `
-            self.onmessage = function(e) {
-                const lines = e.data.split('\\n');
-                const seen = new Set();
-                const cats = [];
-                for (let i = 0; i < lines.length; i++) {
-                    const line = lines[i].trim();
-                    if (!line.startsWith('#EXTINF')) continue;
-                    const m = line.match(/group-title="([^"]*)"/i);
-                    if (m) {
-                        const cat = m[1].replace(/[\\r\\n\\t]/g, '').trim();
-                        if (cat && !seen.has(cat)) {
-                            seen.add(cat);
-                            cats.push(cat);
-                        }
-                    }
-                }
-                self.postMessage(cats.join('||'));
-            };
-        `;
-
-        const blob = new Blob([workerCode], { type: 'application/javascript' });
-        const worker = new Worker(URL.createObjectURL(blob));
-
-        worker.onmessage = function(e) {
-            log('Tamamlandı! Kategoriler gönderildi.', 3000);
-            window.AppInventor.setWebViewString('CATEGORIES:' + e.data);
-        };
-
         function log(txt, hideAfter) {
             dbg.style.opacity = '1';
             dbg.textContent = txt;
-            if (hideAfter) setTimeout(() => { dbg.style.opacity = '0'; }, hideAfter);
+            if (hideAfter) {
+                setTimeout(() => { dbg.style.opacity = '0'; }, hideAfter);
+            }
         }
 
-        function parseRawM3U(text) {
-            log('Ayrıştırılıyor (Worker)...');
-            worker.postMessage(text);
-        }
-
-        // --- PLAYER LOGIK ---
         function stopExistingPlayers() {
             if (hlsPlayer) { hlsPlayer.destroy(); hlsPlayer = null; }
-            if (tsPlayer)  { tsPlayer.unload(); tsPlayer.detachMediaElement(); tsPlayer.destroy(); tsPlayer = null; }
+            if (tsPlayer)  {
+                tsPlayer.unload();
+                tsPlayer.detachMediaElement();
+                tsPlayer.destroy();
+                tsPlayer = null;
+            }
             video.src = "";
+            video.load();
         }
 
         function startStream(url) {
             if (!url) return;
             stopExistingPlayers();
+            
             const lo = url.toLowerCase();
-            const isTS = lo.includes('.ts') || lo.includes('extension=ts') || lo.includes('live.php') || lo.includes('type=m3u_plus');
+            
+            // Spezielle Erkennung für sup-4k.org und TS-Streams über PHP
+            const isTS = lo.includes('.ts') || 
+                         lo.includes('extension=ts') || 
+                         lo.includes('live.php') || 
+                         lo.includes('type=m3u_plus');
 
             if (isTS && mpegts.getFeatureList().mseLivePlayback) {
-                tsPlayer = mpegts.createPlayer({ type: 'mse', isLive: true, url });
+                log('MPEG-TS Modu aktif');
+                tsPlayer = mpegts.createPlayer({
+                    type: 'mse',
+                    isLive: true,
+                    url: url
+                });
                 tsPlayer.attachMediaElement(video);
                 tsPlayer.load();
+                tsPlayer.on(mpegts.Events.ERROR, (e) => {
+                    log('TS Hatası: ' + e);
+                });
                 handlePlayback();
-            } else if (Hls.isSupported() && (lo.includes('m3u8') || lo.includes('m3u'))) {
-                hlsPlayer = new Hls({ enableWorker: true });
+            } 
+            else if (Hls.isSupported() && (lo.includes('m3u8') || !lo.includes('workers.dev'))) {
+                log('HLS Modu aktif');
+                hlsPlayer = new Hls({
+                    xhrSetup: function(xhr) { xhr.withCredentials = false; }
+                });
                 hlsPlayer.loadSource(url);
                 hlsPlayer.attachMedia(video);
-                hlsPlayer.on(Hls.Events.MANIFEST_PARSED, () => handlePlayback());
+                hlsPlayer.on(Hls.Events.MANIFEST_PARSED, () => {
+                    handlePlayback();
+                });
             } else {
+                log('Direkt Oynatılıyor');
                 video.src = url;
                 handlePlayback();
             }
@@ -112,24 +106,55 @@
 
         function handlePlayback() {
             if (hasInteracted) {
-                video.muted = false; video.play().catch(()=>{});
+                video.muted = false;
+                video.play().catch(e => log("Play hatası: " + e));
                 msg.style.display = 'none';
             } else {
-                video.play().catch(()=>{});
+                video.play().catch(() => {});
                 msg.innerHTML = 'Ses için dokun';
                 msg.style.display = 'block';
             }
         }
 
-        window.addEventListener('click', () => { hasInteracted = true; video.muted = false; video.play(); msg.style.display = 'none'; });
+        window.addEventListener('click', () => {
+            hasInteracted = true;
+            video.muted = false;
+            video.play();
+            msg.style.display = 'none';
+        });
+
+        function parseRawM3U(text) {
+            log('Ayrıştırılıyor...');
+            const lines = text.split('\n');
+            const seen = new Set();
+            const cats = [];
+
+            for (let i = 0; i < lines.length; i++) {
+                const line = lines[i].trim();
+                if (!line.startsWith('#EXTINF')) continue;
+                
+                const m = line.match(/group-title="([^"]*)"/i);
+                if (m) {
+                    const cat = m[1].replace(/[\r\n\t]/g, '').trim();
+                    if (cat && !seen.has(cat)) {
+                        seen.add(cat);
+                        cats.push(cat);
+                    }
+                }
+            }
+            log('Tamamlandı! ' + cats.length + ' kategori bulundu', 3000);
+            window.AppInventor.setWebViewString('CATEGORIES:' + cats.join('||'));
+        }
 
         function handleCommand(cmd) {
-            if (!cmd || cmd.startsWith('CATEGORIES:')) return;
+            if (!cmd) return;
+            if (cmd.startsWith('CATEGORIES:')) return;
+
             if (cmd.startsWith('PARSE_TEXT:')) {
                 parseRawM3U(cmd.slice(11));
             } else if (cmd.startsWith('PLAY:')) {
                 startStream(cmd.slice(5));
-            } else if (cmd.includes('://')) {
+            } else {
                 startStream(cmd);
             }
         }
@@ -141,7 +166,9 @@
                     currentCmd = cmd;
                     handleCommand(cmd);
                 }
-            } catch(e) {}
+            } catch(e) {
+                log('Hata: ' + e.message, 10000);
+            }
         }, 300);
     </script>
 </body>
