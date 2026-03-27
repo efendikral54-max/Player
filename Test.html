@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Universal IPTV Player</title>
+    <title>Universal IPTV Player - Worker Version</title>
     <script src="https://cdn.jsdelivr.net/npm/hls.js@latest"></script>
     <script src="https://cdn.jsdelivr.net/npm/mpegts.js@latest/dist/mpegts.min.js"></script>
     <style>
@@ -13,61 +13,123 @@
             display: flex; justify-content: center; align-items: center;
         }
         video { position: absolute; width: 100%; height: 100%; object-fit: contain; z-index: 1; }
+        
         #msg { 
             position: relative; z-index: 100; color: white; 
             font-family: sans-serif; font-size: 22px; font-weight: bold;
             text-align: center; background: rgba(0,0,0,0.7); 
             padding: 25px; border-radius: 15px; border: 2px solid rgba(255,255,255,0.2);
         }
+
         #dbg {
             position: fixed; top: 8px; left: 8px; z-index: 999;
             color: #0f0; font-family: monospace; font-size: 11px;
-            background: rgba(0,0,0,0.7); padding: 6px 10px; border-radius: 6px;
-            max-width: 500px; word-break: break-all;
-            transition: opacity 1s;
+            background: rgba(0,0,0,0.8); padding: 8px 12px; border-radius: 6px;
+            border: 1px solid #0f0; max-width: 80%;
+            transition: opacity 1s; pointer-events: none;
         }
+
+        /* Lade-Indikator für Worker */
+        #workerLoad {
+            position: fixed; top: 50%; left: 50%; transform: translate(-50%,-50%);
+            z-index: 400; width: 40px; height: 40px;
+            border: 4px solid rgba(0,255,0,0.2); border-top: 4px solid #0f0;
+            border-radius: 50%; animation: spin 1s linear infinite; display: none;
+        }
+        @keyframes spin { to { transform: translate(-50%,-50%) rotate(360deg); } }
     </style>
 </head>
 <body>
     <video id="video" playsinline autoplay muted></video>
+    <div id="workerLoad"></div>
     <div id="msg">Yükleniyor...</div>
-    <div id="dbg">Kategoriler yükleniyor...</div>
+    <div id="dbg">Hazır</div>
 
     <script>
         const video = document.getElementById('video');
         const msg   = document.getElementById('msg');
         const dbg   = document.getElementById('dbg');
+        const loader = document.getElementById('workerLoad');
 
         let hlsPlayer = null, tsPlayer = null, hasInteracted = false;
         let currentCmd = '';
-        let hideTimer = null;
+
+        // --- WEB WORKER LOGIK (In-Line) ---
+        // Wir erstellen den Worker-Code als String, damit keine externe .js Datei nötig ist
+        const workerCode = `
+            self.onmessage = function(e) {
+                const m3uText = e.data;
+                const lines = m3uText.split('\\n');
+                const categories = new Map(); // Name -> {count, logo}
+
+                for (let i = 0; i < lines.length; i++) {
+                    const line = lines[i].trim();
+                    if (line.startsWith('#EXTINF')) {
+                        // Kategorie finden
+                        const catMatch = line.match(/group-title="([^"]*)"/i);
+                        // Logo finden
+                        const logoMatch = line.match(/tvg-logo="([^"]*)"/i);
+                        
+                        if (catMatch) {
+                            const catName = catMatch[1].trim() || "Diğer";
+                            const logoUrl = logoMatch ? logoMatch[1] : "";
+                            
+                            if (!categories.has(catName)) {
+                                categories.set(catName, { count: 1, logo: logoUrl });
+                            } else {
+                                const data = categories.get(catName);
+                                data.count++;
+                                // Falls noch kein Logo da war, nimm das erste verfügbare
+                                if (!data.logo && logoUrl) data.logo = logoUrl;
+                            }
+                        }
+                    }
+                }
+
+                // In Array umwandeln für App Inventor
+                // Format: Name|Anzahl|Logo
+                const result = Array.from(categories).map(([name, data]) => {
+                    return name + " (" + data.count + ")|" + data.logo;
+                });
+
+                self.postMessage(result.join('||'));
+            };
+        `;
+
+        const blob = new Blob([workerCode], { type: 'application/javascript' });
+        const worker = new Worker(URL.createObjectURL(blob));
+
+        worker.onmessage = function(e) {
+            loader.style.display = 'none';
+            log("Başarıyla ayrıştırıldı!", 3000);
+            // Sende Daten an App Inventor
+            window.AppInventor.setWebViewString('CATEGORIES:' + e.data);
+        };
 
         function log(txt, hideAfterMs) {
             dbg.style.opacity = '1';
             dbg.textContent = txt;
-            if (hideTimer) clearTimeout(hideTimer);
-            const delay = hideAfterMs || 30000;
-            hideTimer = setTimeout(() => {
-                dbg.style.opacity = '0';
-            }, delay);
+            setTimeout(() => { dbg.style.opacity = '0'; }, hideAfterMs || 5000);
         }
 
+        function parseM3UWithWorker(text) {
+            loader.style.display = 'block';
+            log("Worker çalışıyor: Liste ayrıştırılıyor...", 60000);
+            worker.postMessage(text);
+        }
+
+        // --- PLAYER LOGIK ---
         function forcePlay() {
             hasInteracted = true;
             video.muted = false;
-            video.volume = 1.0;
             video.play();
             msg.style.display = 'none';
         }
-        window.addEventListener('keydown', forcePlay);
-        window.addEventListener('click',   forcePlay);
+        window.addEventListener('click', forcePlay);
 
         function stopExistingPlayers() {
             if (hlsPlayer) { hlsPlayer.destroy(); hlsPlayer = null; }
-            if (tsPlayer)  {
-                tsPlayer.unload(); tsPlayer.detachMediaElement();
-                tsPlayer.destroy(); tsPlayer = null;
-            }
+            if (tsPlayer)  { tsPlayer.unload(); tsPlayer.detachMediaElement(); tsPlayer.destroy(); tsPlayer = null; }
             video.src = "";
         }
 
@@ -75,22 +137,18 @@
             if (!url) return;
             stopExistingPlayers();
             const lo = url.toLowerCase();
-            const isTS     = lo.includes('.ts') || lo.includes('type=m3u_plus');
-            const isWorker = lo.includes('workers.dev');
+            const isTS = lo.includes('.ts') || lo.includes('type=m3u_plus');
 
             if (isTS && mpegts.getFeatureList().mseLivePlayback) {
                 tsPlayer = mpegts.createPlayer({ type: 'mse', isLive: true, url });
                 tsPlayer.attachMediaElement(video);
                 tsPlayer.load();
                 handlePlayback();
-            } else if (!isWorker && Hls.isSupported()) {
+            } else if (Hls.isSupported() && (lo.includes('m3u8') || !lo.includes('workers.dev'))) {
                 hlsPlayer = new Hls({ xhrSetup: xhr => { xhr.withCredentials = false; } });
                 hlsPlayer.loadSource(url);
                 hlsPlayer.attachMedia(video);
                 hlsPlayer.on(Hls.Events.MANIFEST_PARSED, () => handlePlayback());
-                hlsPlayer.on(Hls.Events.ERROR, (e, data) => {
-                    if (data.fatal) { hlsPlayer.destroy(); video.src = url; handlePlayback(); }
-                });
             } else {
                 video.src = url;
                 handlePlayback();
@@ -99,47 +157,23 @@
 
         function handlePlayback() {
             if (hasInteracted) {
-                video.muted = false; video.play();
+                video.muted = false; video.play().catch(()=>{});
                 msg.style.display = 'none';
             } else {
-                video.play();
-                msg.innerHTML = 'Ses için OK tuşuna bas';
+                video.play().catch(()=>{});
+                msg.innerHTML = 'Ses için dokun';
                 msg.style.display = 'block';
             }
         }
 
-        function parseRawM3U(m3uText) {
-            log('Kategoriler yükleniyor...', 30000);
-            const lines = m3uText.split('\n');
-            const seen  = new Set();
-            const cats  = [];
-            for (const line of lines) {
-                if (!line.startsWith('#EXTINF')) continue;
-                const m = line.match(/group-title="([^"]*)"/i);
-                if (m) {
-                    const cat = m[1].replace(/[\r\n\t]/g, '').trim();
-                    if (cat && !seen.has(cat)) {
-                        seen.add(cat);
-                        cats.push(cat);
-                    }
-                }
-            }
-            // Erfolg → nach 3 Sekunden ausblenden
-            log('Tamamlandı! ' + cats.length + ' kategori bulundu', 3000);
-            window.AppInventor.setWebViewString('CATEGORIES:' + cats.join('||'));
-        }
-
         function handleCommand(cmd) {
-            if (!cmd) return;
-            if (cmd.startsWith('CATEGORIES:') || cmd.startsWith('ERROR:')) return;
+            if (!cmd || cmd.startsWith('CATEGORIES:')) return;
 
-            if (cmd.startsWith('INIT:')) {
-                startStream(cmd.slice(5));
-            } else if (cmd.startsWith('PARSE_TEXT:')) {
-                parseRawM3U(cmd.slice(11));
+            if (cmd.startsWith('PARSE_TEXT:')) {
+                parseM3UWithWorker(cmd.slice(11));
             } else if (cmd.startsWith('PLAY:')) {
                 startStream(cmd.slice(5));
-            } else {
+            } else if (cmd.includes('://')) {
                 startStream(cmd);
             }
         }
@@ -151,9 +185,7 @@
                     currentCmd = cmd;
                     handleCommand(cmd);
                 }
-            } catch(e) {
-                log('Hata: ' + e.message, 10000);
-            }
+            } catch(e) { log("Hata: " + e.message); }
         }, 300);
     </script>
 </body>
