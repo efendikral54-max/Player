@@ -24,17 +24,17 @@
 
         #msg { 
             position: relative; z-index: 100; color: white; 
-            font-family: sans-serif; font-size: 20px; font-weight: bold;
+            font-family: sans-serif; font-size: 18px; font-weight: bold;
             text-align: center; background: rgba(0,0,0,0.8); 
-            padding: 20px 30px; border-radius: 12px; border: 2px solid #e50914;
-            display: none; max-width: 80%; line-height: 1.4;
+            padding: 15px; border-radius: 10px; border: 2px solid #e50914;
+            display: none; max-width: 90%;
         }
 
-        #status {
-            position: fixed; top: 10px; left: 10px; z-index: 999;
-            color: #0f0; font-family: sans-serif; font-size: 12px;
-            background: rgba(0,0,0,0.7); padding: 5px 10px; border-radius: 4px;
-            display: none;
+        /* DEBUG CONSOLE - Zeigt Fehler direkt im Screen */
+        #debug {
+            position: fixed; bottom: 10px; left: 10px; z-index: 999;
+            color: #0f0; font-family: monospace; font-size: 10px;
+            background: rgba(0,0,0,0.6); padding: 5px; pointer-events: none;
         }
     </style>
 </head>
@@ -42,33 +42,26 @@
     <video id="video" playsinline autoplay muted></video>
     <div id="spinner"></div>
     <div id="msg"></div>
-    <div id="status"></div>
+    <div id="debug">System Bereit</div>
 
     <script>
         const video   = document.getElementById('video');
         const msg     = document.getElementById('msg');
         const spinner = document.getElementById('spinner');
-        const status  = document.getElementById('status');
+        const dbg     = document.getElementById('debug');
 
         let hlsPlayer = null, tsPlayer = null, hasInteracted = false;
         let currentCmd = '';
 
-        // Hochoptimierte HLS Konfiguration aus dem Index.html
+        // Übernommene Profi-Konfiguration aus Index.html
         const HLS_CONFIG = {
             maxBufferLength: 30,
             maxMaxBufferLength: 60,
-            maxBufferSize: 60 * 1024 * 1024,
-            manifestLoadingTimeOut: 10000,
-            manifestLoadingMaxRetry: 3,
             enableWorker: true,
             xhrSetup: function(xhr) { xhr.withCredentials = false; }
         };
 
-        function showUIStatus(txt) {
-            status.style.display = 'block';
-            status.textContent = txt;
-            setTimeout(() => { status.style.display = 'none'; }, 3000);
-        }
+        function log(t) { dbg.innerText = t; console.log(t); }
 
         function showError(text) {
             spinner.style.display = 'none';
@@ -76,11 +69,7 @@
             msg.style.display = 'block';
         }
 
-        function hideError() {
-            msg.style.display = 'none';
-        }
-
-        // WEB WORKER (Parsing bleibt erhalten)
+        // WEB WORKER zum Parsen (aus Test.html)
         const workerCode = `
             self.onmessage = function(e) {
                 const lines = e.data.split('\\n');
@@ -91,93 +80,78 @@
                     if (!line.startsWith('#EXTINF')) continue;
                     const m = line.match(/group-title="([^"]*)"/i);
                     if (m) {
-                        const cat = m[1].replace(/[\\r\\n\\t]/g, '').trim();
+                        const cat = m[1].trim();
                         if (cat && !seen.has(cat)) { seen.add(cat); cats.push(cat); }
                     }
                 }
                 self.postMessage(cats.join('||'));
             };
         `;
-        const blob = new Blob([workerCode], { type: 'application/javascript' });
-        const worker = new Worker(URL.createObjectURL(blob));
+        const worker = new Worker(URL.createObjectURL(new Blob([workerCode], {type:'application/javascript'})));
         worker.onmessage = (e) => {
             spinner.style.display = 'none';
             window.AppInventor.setWebViewString('CATEGORIES:' + e.data);
         };
 
-        function stopExistingPlayers() {
+        function stopPlayers() {
             if (hlsPlayer) { hlsPlayer.destroy(); hlsPlayer = null; }
             if (tsPlayer)  { tsPlayer.unload(); tsPlayer.detachMediaElement(); tsPlayer.destroy(); tsPlayer = null; }
             video.src = "";
             video.load();
         }
 
-        // Die robuste Logik aus Index.html
+        // Robuste Fallback-Funktion (Direct Play) aus Index.html
         function tryDirectPlay(url) {
+            log("Direct Play Versuch...");
             video.src = url;
             video.load();
-            video.oncanplay = () => {
-                spinner.style.display = 'none';
-                handlePlayback();
-            };
-            video.onerror = () => {
-                showError('Yayın oynatılamadı. Sunucu yanıt vermiyor veya format desteklenmiyor.');
-            };
+            video.oncanplay = () => { spinner.style.display = 'none'; video.play(); };
+            video.onerror = () => showError("Yayın formatı desteklenmiyor.");
         }
 
-        async function startStream(url) {
+        function startStream(url) {
             if (!url) return;
-            stopExistingPlayers();
-            hideError();
+            log("Lade: " + url.substring(0, 30) + "...");
+            stopPlayers();
+            msg.style.display = 'none';
             spinner.style.display = 'block';
 
             const lo = url.toLowerCase();
-            // Erkennung verbessert
-            const isTS = lo.includes('.ts') || lo.includes('extension=ts') || lo.includes('live.php') || lo.includes('type=m3u_plus');
+            const isTS = lo.includes('.ts') || lo.includes('extension=ts') || lo.includes('live.php');
 
             if (isTS && mpegts.getFeatureList().mseLivePlayback) {
-                showUIStatus('MPEG-TS Modu');
+                log("Mode: MPEG-TS");
                 tsPlayer = mpegts.createPlayer({ type: 'mse', isLive: true, url: url });
                 tsPlayer.attachMediaElement(video);
                 tsPlayer.load();
-                tsPlayer.on(mpegts.Events.MEDIA_INFO, () => { spinner.style.display = 'none'; handlePlayback(); });
                 tsPlayer.on(mpegts.Events.ERROR, () => tryDirectPlay(url));
+                tsPlayer.play().then(() => { spinner.style.display = 'none'; });
             } 
             else if (Hls.isSupported()) {
-                showUIStatus('HLS Modu');
+                log("Mode: HLS");
                 hlsPlayer = new Hls(HLS_CONFIG);
                 hlsPlayer.loadSource(url);
                 hlsPlayer.attachMedia(video);
-                hlsPlayer.on(Hls.Events.MANIFEST_PARSED, () => { spinner.style.display = 'none'; handlePlayback(); });
-                hlsPlayer.on(Hls.Events.ERROR, (event, data) => {
-                    if (data.fatal) {
-                        hlsPlayer.destroy(); hlsPlayer = null;
-                        tryDirectPlay(url);
-                    }
-                });
-            } else {
+                hlsPlayer.on(Hls.Events.MANIFEST_PARSED, () => { spinner.style.display = 'none'; video.play(); });
+                hlsPlayer.on(Hls.Events.ERROR, (e, data) => { if(data.fatal) tryDirectPlay(url); });
+            } 
+            else {
                 tryDirectPlay(url);
             }
         }
 
-        function handlePlayback() {
-            if (hasInteracted) {
-                video.muted = false; 
-                video.play().catch(() => {});
-            } else {
-                video.play().catch(()=>{});
-                showError('Sesi açmak için ekrana dokunun');
-            }
-        }
-
+        // Klick-Aktivierung für Sound (WICHTIG!)
         window.addEventListener('click', () => { 
             hasInteracted = true; 
-            hideError();
-            if(video.paused) { video.muted = false; video.play(); }
+            video.muted = false; 
+            video.play(); 
+            msg.style.display = 'none';
         });
 
         function handleCommand(cmd) {
+            log("Cmd: " + cmd.substring(0, 20));
             if (!cmd || cmd.startsWith('CATEGORIES:')) return;
+
             if (cmd.startsWith('PARSE_TEXT:')) {
                 spinner.style.display = 'block';
                 worker.postMessage(cmd.slice(11));
@@ -188,6 +162,7 @@
             }
         }
 
+        // Schnelles Abfrage-Intervall für App Inventor
         setInterval(() => {
             try {
                 const cmd = window.AppInventor.getWebViewString();
@@ -196,7 +171,7 @@
                     handleCommand(cmd);
                 }
             } catch(e) {}
-        }, 300);
+        }, 200);
     </script>
 </body>
 </html>
