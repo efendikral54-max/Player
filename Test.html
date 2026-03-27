@@ -14,147 +14,241 @@
         }
         video { position: absolute; width: 100%; height: 100%; object-fit: contain; z-index: 1; }
         
-        #spinner { 
-            position: fixed; top: 50%; left: 50%; transform: translate(-50%,-50%); 
-            z-index: 300; width: 60px; height: 60px; 
-            border: 5px solid rgba(255,255,255,0.2); border-top: 5px solid #e50914; 
-            border-radius: 50%; display: none; animation: spin 0.8s linear infinite; 
+        /* Spinner hinzugefügt für besseres Feedback */
+        #spinner {
+            position: fixed; top: 50%; left: 50%; transform: translate(-50%,-50%);
+            z-index: 300; width: 60px; height: 60px;
+            border: 5px solid rgba(255,255,255,0.2);
+            border-top: 5px solid #e50914; border-radius: 50%;
+            display: none; animation: spin 0.8s linear infinite;
         }
         @keyframes spin { to { transform: translate(-50%,-50%) rotate(360deg); } }
 
         #msg { 
             position: relative; z-index: 100; color: white; 
-            font-family: sans-serif; font-size: 18px; font-weight: bold;
-            text-align: center; background: rgba(0,0,0,0.8); 
-            padding: 15px; border-radius: 10px; border: 2px solid #e50914;
-            display: none; max-width: 90%;
+            font-family: sans-serif; font-size: 22px; font-weight: bold;
+            text-align: center; background: rgba(0,0,0,0.7); 
+            padding: 25px; border-radius: 15px; border: 2px solid rgba(255,255,255,0.2);
+            display: none;
         }
-
-        /* DEBUG CONSOLE - Zeigt Fehler direkt im Screen */
-        #debug {
-            position: fixed; bottom: 10px; left: 10px; z-index: 999;
-            color: #0f0; font-family: monospace; font-size: 10px;
-            background: rgba(0,0,0,0.6); padding: 5px; pointer-events: none;
+        #dbg {
+            position: fixed; top: 8px; left: 8px; z-index: 999;
+            color: #0f0; font-family: monospace; font-size: 11px;
+            background: rgba(0,0,0,0.7); padding: 6px 10px; border-radius: 6px;
+            max-width: 500px; word-break: break-all;
+            transition: opacity 1s;
+        }
+        #channelInfo {
+            position: fixed; bottom: 30px; left: 50%; transform: translateX(-50%);
+            z-index: 200; color: white; font-family: sans-serif; font-size: 20px;
+            font-weight: bold; background: rgba(0,0,0,0.75);
+            padding: 10px 24px; border-radius: 10px;
+            border: 2px solid rgba(255,255,255,0.15);
+            display: none; transition: opacity 0.5s;
         }
     </style>
 </head>
 <body>
     <video id="video" playsinline autoplay muted></video>
     <div id="spinner"></div>
-    <div id="msg"></div>
-    <div id="debug">System Bereit</div>
+    <div id="msg">Yükleniyor...</div>
+    <div id="dbg">Sistem Hazır...</div>
+    <div id="channelInfo"></div>
 
     <script>
-        const video   = document.getElementById('video');
-        const msg     = document.getElementById('msg');
+        const video = document.getElementById('video');
+        const msg   = document.getElementById('msg');
+        const dbg   = document.getElementById('dbg');
         const spinner = document.getElementById('spinner');
-        const dbg     = document.getElementById('debug');
+        const channelInfo = document.getElementById('channelInfo');
 
         let hlsPlayer = null, tsPlayer = null, hasInteracted = false;
         let currentCmd = '';
+        let hideTimer = null, infoTimer = null, zappingTimer = null;
+        
+        // Zapping-Listen hinzugefügt
+        let urlList = [], nameList = [], currentIndex = 0;
 
-        // Übernommene Profi-Konfiguration aus Index.html
+        // Die robuste Konfiguration aus dem Index-Player
         const HLS_CONFIG = {
             maxBufferLength: 30,
             maxMaxBufferLength: 60,
+            manifestLoadingTimeOut: 10000,
+            manifestLoadingMaxRetry: 3,
             enableWorker: true,
             xhrSetup: function(xhr) { xhr.withCredentials = false; }
         };
 
-        function log(t) { dbg.innerText = t; console.log(t); }
-
-        function showError(text) {
-            spinner.style.display = 'none';
-            msg.innerHTML = text;
-            msg.style.display = 'block';
+        function log(txt, hideAfterMs) {
+            dbg.style.opacity = '1';
+            dbg.textContent = txt;
+            if (hideTimer) clearTimeout(hideTimer);
+            const delay = hideAfterMs || 30000;
+            hideTimer = setTimeout(() => { dbg.style.opacity = '0'; }, delay);
         }
 
-        // WEB WORKER zum Parsen (aus Test.html)
-        const workerCode = `
-            self.onmessage = function(e) {
-                const lines = e.data.split('\\n');
-                const seen = new Set();
-                const cats = [];
-                for (let i = 0; i < lines.length; i++) {
-                    const line = lines[i].trim();
-                    if (!line.startsWith('#EXTINF')) continue;
-                    const m = line.match(/group-title="([^"]*)"/i);
-                    if (m) {
-                        const cat = m[1].trim();
-                        if (cat && !seen.has(cat)) { seen.add(cat); cats.push(cat); }
-                    }
-                }
-                self.postMessage(cats.join('||'));
-            };
-        `;
-        const worker = new Worker(URL.createObjectURL(new Blob([workerCode], {type:'application/javascript'})));
-        worker.onmessage = (e) => {
-            spinner.style.display = 'none';
-            window.AppInventor.setWebViewString('CATEGORIES:' + e.data);
-        };
+        function showChannelInfo(name, index) {
+            channelInfo.textContent = (index + 1) + '. ' + name;
+            channelInfo.style.display = 'block';
+            channelInfo.style.opacity = '1';
+            if (infoTimer) clearTimeout(infoTimer);
+            infoTimer = setTimeout(() => {
+                channelInfo.style.opacity = '0';
+                setTimeout(() => { channelInfo.style.display = 'none'; }, 500);
+            }, 3000);
+        }
 
-        function stopPlayers() {
+        function forcePlay() {
+            hasInteracted = true;
+            video.muted = false;
+            video.volume = 1.0;
+            video.play().catch(() => {});
+            msg.style.display = 'none';
+        }
+        window.addEventListener('keydown', (e) => {
+            forcePlay();
+            // Tastensteuerung für Zapping (Hoch/Runter)
+            if (urlList.length > 0) {
+                if (e.keyCode === 40 || e.keyCode === 229) { // Runter
+                    currentIndex = (currentIndex + 1) % urlList.length;
+                    handleZapping();
+                } else if (e.keyCode === 38 || e.keyCode === 228) { // Hoch
+                    currentIndex = (currentIndex - 1 + urlList.length) % urlList.length;
+                    handleZapping();
+                }
+            }
+        });
+        window.addEventListener('click', forcePlay);
+
+        function handleZapping() {
+            showChannelInfo(nameList[currentIndex] || '?', currentIndex);
+            window.AppInventor.setWebViewString('INDEX:' + currentIndex);
+            if (zappingTimer) clearTimeout(zappingTimer);
+            zappingTimer = setTimeout(() => {
+                startStream(urlList[currentIndex]);
+            }, 200);
+        }
+
+        function stopExistingPlayers() {
             if (hlsPlayer) { hlsPlayer.destroy(); hlsPlayer = null; }
-            if (tsPlayer)  { tsPlayer.unload(); tsPlayer.detachMediaElement(); tsPlayer.destroy(); tsPlayer = null; }
+            if (tsPlayer)  {
+                tsPlayer.unload(); tsPlayer.detachMediaElement();
+                tsPlayer.destroy(); tsPlayer = null;
+            }
             video.src = "";
             video.load();
         }
 
-        // Robuste Fallback-Funktion (Direct Play) aus Index.html
+        // Die verbesserte Fallback-Logik aus dem Index-Player
         function tryDirectPlay(url) {
-            log("Direct Play Versuch...");
             video.src = url;
             video.load();
-            video.oncanplay = () => { spinner.style.display = 'none'; video.play(); };
-            video.onerror = () => showError("Yayın formatı desteklenmiyor.");
+            video.oncanplay = () => {
+                spinner.style.display = 'none';
+                handlePlayback();
+            };
+            video.onerror = () => {
+                spinner.style.display = 'none';
+                log("Hata: Yayın formatı desteklenmiyor.");
+            };
         }
 
         function startStream(url) {
             if (!url) return;
-            log("Lade: " + url.substring(0, 30) + "...");
-            stopPlayers();
-            msg.style.display = 'none';
+            stopExistingPlayers();
             spinner.style.display = 'block';
-
+            msg.style.display = 'none';
+            
             const lo = url.toLowerCase();
-            const isTS = lo.includes('.ts') || lo.includes('extension=ts') || lo.includes('live.php');
+            // ERWEITERTE ERKENNUNG: Jetzt werden auch live.php und extension=ts erkannt
+            const isTS = lo.includes('.ts') || lo.includes('extension=ts') || lo.includes('live.php') || lo.includes('type=m3u_plus');
+            const isWorker = lo.includes('workers.dev');
 
             if (isTS && mpegts.getFeatureList().mseLivePlayback) {
-                log("Mode: MPEG-TS");
-                tsPlayer = mpegts.createPlayer({ type: 'mse', isLive: true, url: url });
+                log("Mod: MPEG-TS");
+                tsPlayer = mpegts.createPlayer({ 
+                    type: 'mse', isLive: true, url,
+                    config: { enableWorker: true }
+                });
                 tsPlayer.attachMediaElement(video);
                 tsPlayer.load();
+                tsPlayer.on(mpegts.Events.MEDIA_INFO, () => {
+                    spinner.style.display = 'none';
+                    handlePlayback();
+                });
                 tsPlayer.on(mpegts.Events.ERROR, () => tryDirectPlay(url));
-                tsPlayer.play().then(() => { spinner.style.display = 'none'; });
-            } 
-            else if (Hls.isSupported()) {
-                log("Mode: HLS");
+            } else if (!isWorker && Hls.isSupported()) {
+                log("Mod: HLS");
                 hlsPlayer = new Hls(HLS_CONFIG);
                 hlsPlayer.loadSource(url);
                 hlsPlayer.attachMedia(video);
-                hlsPlayer.on(Hls.Events.MANIFEST_PARSED, () => { spinner.style.display = 'none'; video.play(); });
-                hlsPlayer.on(Hls.Events.ERROR, (e, data) => { if(data.fatal) tryDirectPlay(url); });
-            } 
-            else {
+                hlsPlayer.on(Hls.Events.MANIFEST_PARSED, () => {
+                    spinner.style.display = 'none';
+                    handlePlayback();
+                });
+                hlsPlayer.on(Hls.Events.ERROR, (e, data) => {
+                    if (data.fatal) {
+                        hlsPlayer.destroy(); hlsPlayer = null;
+                        tryDirectPlay(url);
+                    }
+                });
+            } else {
+                log("Mod: Direct");
                 tryDirectPlay(url);
             }
         }
 
-        // Klick-Aktivierung für Sound (WICHTIG!)
-        window.addEventListener('click', () => { 
-            hasInteracted = true; 
-            video.muted = false; 
-            video.play(); 
-            msg.style.display = 'none';
-        });
+        function handlePlayback() {
+            if (hasInteracted) {
+                video.muted = false;
+                video.play().catch(() => {});
+                msg.style.display = 'none';
+            } else {
+                video.play().catch(() => {});
+                msg.innerHTML = 'Ses için OK tuşuna bas';
+                msg.style.display = 'block';
+            }
+        }
+
+        // Deine originale Parsing-Funktion bleibt erhalten
+        function parseRawM3U(m3uText) {
+            log('Kategoriler yükleniyor...', 30000);
+            const lines = m3uText.split('\n');
+            const seen  = new Set();
+            const cats  = [];
+            for (const line of lines) {
+                if (!line.startsWith('#EXTINF')) continue;
+                const m = line.match(/group-title="([^"]*)"/i);
+                if (m) {
+                    const cat = m[1].replace(/[\r\n\t]/g, '').trim();
+                    if (cat && !seen.has(cat)) {
+                        seen.add(cat);
+                        cats.push(cat);
+                    }
+                }
+            }
+            log('Tamamlandı! ' + cats.length + ' kategori bulundu', 3000);
+            window.AppInventor.setWebViewString('CATEGORIES:' + cats.join('||'));
+        }
 
         function handleCommand(cmd) {
-            log("Cmd: " + cmd.substring(0, 20));
-            if (!cmd || cmd.startsWith('CATEGORIES:')) return;
+            if (!cmd || cmd.startsWith('CATEGORIES:') || cmd.startsWith('ERROR:') || cmd.startsWith('INDEX:')) return;
 
-            if (cmd.startsWith('PARSE_TEXT:')) {
-                spinner.style.display = 'block';
-                worker.postMessage(cmd.slice(11));
+            // SETLIST Support für Zapping hinzugefügt
+            if (cmd.startsWith('SETLIST:')) {
+                const parts = cmd.slice(8).split('~~~');
+                urlList = parts[0] ? parts[0].split('||') : [];
+                nameList = parts[1] ? parts[1].split('||') : [];
+                currentIndex = parts[2] ? parseInt(parts[2]) : 0;
+                if (urlList[currentIndex]) {
+                    startStream(urlList[currentIndex]);
+                    showChannelInfo(nameList[currentIndex] || '?', currentIndex);
+                }
+            } 
+            else if (cmd.startsWith('INIT:')) {
+                startStream(cmd.slice(5));
+            } else if (cmd.startsWith('PARSE_TEXT:')) {
+                parseRawM3U(cmd.slice(11));
             } else if (cmd.startsWith('PLAY:')) {
                 startStream(cmd.slice(5));
             } else if (cmd.includes('://')) {
@@ -162,7 +256,6 @@
             }
         }
 
-        // Schnelles Abfrage-Intervall für App Inventor
         setInterval(() => {
             try {
                 const cmd = window.AppInventor.getWebViewString();
@@ -170,8 +263,10 @@
                     currentCmd = cmd;
                     handleCommand(cmd);
                 }
-            } catch(e) {}
-        }, 200);
+            } catch(e) {
+                log('Hata: ' + e.message, 10000);
+            }
+        }, 300);
     </script>
 </body>
 </html>
