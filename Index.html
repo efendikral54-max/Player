@@ -14,7 +14,7 @@
         }
         video { position: absolute; width: 100%; height: 100%; object-fit: contain; z-index: 1; }
         
-        /* Moderner Lade-Kreis */
+        /* Modern Lade-Kreis */
         #spinner {
             position: fixed; top: 50%; left: 50%; transform: translate(-50%,-50%);
             z-index: 300; width: 60px; height: 60px;
@@ -24,29 +24,23 @@
         }
         @keyframes spin { to { transform: translate(-50%,-50%) rotate(360deg); } }
 
+        /* Türkische Fehlermeldung & Interaktions-Box */
         #msg { 
             position: relative; z-index: 100; color: white; 
             font-family: sans-serif; font-size: 22px; font-weight: bold;
-            text-align: center; background: rgba(0,0,0,0.7); 
-            padding: 25px; border-radius: 15px; border: 2px solid rgba(255,255,255,0.2);
-            display: none;
+            text-align: center; background: rgba(0,0,0,0.8); 
+            padding: 25px; border-radius: 15px; border: 2px solid #e50914;
+            display: none; max-width: 80%;
         }
+
         #channelInfo {
             position: fixed; bottom: 30px; left: 50%; transform: translateX(-50%);
             z-index: 200; color: white; font-family: sans-serif; font-size: 20px;
             font-weight: bold; background: rgba(0,0,0,0.75);
             padding: 10px 24px; border-radius: 10px;
             border: 2px solid rgba(255,255,255,0.15);
-            display: none; transition: opacity 0.5s;
+            display: none;
         }
-        #streamStatus {
-            position: fixed; top: 10px; left: 10px; z-index: 300;
-            font-family: sans-serif; font-size: 14px; font-weight: bold;
-            padding: 8px 14px; border-radius: 8px;
-            display: none; transition: opacity 0.8s;
-        }
-        #streamStatus.basarili   { background: rgba(0,80,0,0.8);  color: #00ff00; border: 1px solid #00ff00; }
-        #streamStatus.hata       { background: rgba(80,0,0,0.8);  color: #ff4444; border: 1px solid #ff4444; }
     </style>
 </head>
 <body>
@@ -54,47 +48,34 @@
     <div id="spinner"></div>
     <div id="msg"></div>
     <div id="channelInfo"></div>
-    <div id="streamStatus"></div>
 
     <script>
         const video        = document.getElementById('video');
         const spinner      = document.getElementById('spinner');
         const msg          = document.getElementById('msg');
         const channelInfo  = document.getElementById('channelInfo');
-        const streamStatus = document.getElementById('streamStatus');
 
         let hlsPlayer = null, tsPlayer = null, hasInteracted = false;
         let currentCmd = '';
         let urlList = [], nameList = [], currentIndex = 0;
-        let infoTimer = null, statusTimer = null, zappingTimer = null;
+        let infoTimer = null, zappingTimer = null;
 
-        function showStatus(text, type, hideAfter) {
-            if (statusTimer) clearTimeout(statusTimer);
-            streamStatus.textContent   = text;
-            streamStatus.className     = type;
-            streamStatus.style.display = 'block';
-            streamStatus.style.opacity = '1';
-            statusTimer = setTimeout(() => {
-                streamStatus.style.opacity = '0';
-                setTimeout(() => { streamStatus.style.display = 'none'; }, 800);
-            }, hideAfter || 5000);
+        function showError(text) {
+            spinner.style.display = 'none';
+            msg.innerHTML = text || "Yayın yüklenemedi.<br>Lütfen daha sonra tekrar deneyiniz.";
+            msg.style.display = 'block';
         }
 
         function showChannelInfo(name, index) {
             channelInfo.textContent    = (index + 1) + '. ' + name;
             channelInfo.style.display  = 'block';
-            channelInfo.style.opacity  = '1';
             if (infoTimer) clearTimeout(infoTimer);
-            infoTimer = setTimeout(() => {
-                channelInfo.style.opacity = '0';
-                setTimeout(() => { channelInfo.style.display = 'none'; }, 500);
-            }, 3000);
+            infoTimer = setTimeout(() => { channelInfo.style.display = 'none'; }, 3000);
         }
 
         function forcePlay() {
             hasInteracted = true;
             video.muted = false;
-            video.volume = 1.0;
             video.play().catch(()=>{});
             msg.style.display = 'none';
         }
@@ -120,7 +101,7 @@
             if (zappingTimer) clearTimeout(zappingTimer);
             zappingTimer = setTimeout(() => {
                 startStream(urlList[currentIndex]);
-            }, 150); // 150ms Gecikme
+            }, 150); 
         }
 
         function stopExistingPlayers() {
@@ -129,78 +110,43 @@
                 tsPlayer.unload(); tsPlayer.detachMediaElement();
                 tsPlayer.destroy(); tsPlayer = null;
             }
-            video.src = "";
+            video.removeAttribute('src');
+            video.load();
         }
 
         function startStream(url) {
             if (!url) return;
             stopExistingPlayers();
-            spinner.style.display = 'block'; // Kreis anzeigen
+            msg.style.display = 'none';
+            spinner.style.display = 'block';
 
             const lo = url.toLowerCase();
             const isTS = lo.includes('.ts') || lo.includes('extension=ts') || lo.includes('live.php') || lo.includes('type=m3u_plus');
 
             if (isTS && mpegts.getFeatureList().mseLivePlayback) {
-                tsPlayer = mpegts.createPlayer({
-                    type: 'mse', isLive: true, url,
-                    config: { enableWorker: true, liveBufferLatencyChasing: true }
-                });
+                tsPlayer = mpegts.createPlayer({ type: 'mse', isLive: true, url });
                 tsPlayer.attachMediaElement(video);
                 tsPlayer.load();
+                tsPlayer.on(mpegts.Events.ERROR, () => showError());
                 tsPlayer.on(mpegts.Events.MEDIA_INFO, () => {
                     spinner.style.display = 'none';
-                    handlePlayback();
+                    video.play().catch(()=>{});
                 });
-                tsPlayer.on(mpegts.Events.ERROR, () => {
-                    spinner.style.display = 'none';
-                    showStatus('❌ Yayın hatası', 'hata', 8000);
-                });
-
             } else if (Hls.isSupported() && (lo.includes('.m3u8') || lo.includes('m3u'))) {
-                hlsPlayer = new Hls({ enableWorker: true, xhrSetup: (xhr)=>xhr.withCredentials=false });
+                hlsPlayer = new Hls({ enableWorker: true });
                 hlsPlayer.loadSource(url);
                 hlsPlayer.attachMedia(video);
                 hlsPlayer.on(Hls.Events.MANIFEST_PARSED, () => {
                     spinner.style.display = 'none';
-                    handlePlayback();
+                    video.play().catch(()=>{});
                 });
                 hlsPlayer.on(Hls.Events.ERROR, (e, data) => {
-                    if (data.fatal) { spinner.style.display = 'none'; }
+                    if (data.fatal) showError();
                 });
             } else {
                 video.src = url;
-                video.load();
-                video.oncanplay = () => { spinner.style.display = 'none'; handlePlayback(); };
-                video.onerror = () => { spinner.style.display = 'none'; showStatus('❌ Açılamadı', 'hata', 8000); };
-            }
-        }
-
-        function handlePlayback() {
-            if (hasInteracted) {
-                video.muted = false; video.play().catch(()=>{});
-                msg.style.display = 'none';
-            } else {
-                video.play().catch(()=>{});
-                msg.innerHTML = 'Ses için OK tuşuna bas';
-                msg.style.display = 'block';
-            }
-        }
-
-        function handleCommand(cmd) {
-            if (!cmd || cmd.startsWith('INDEX:')) return;
-            if (cmd.startsWith('SETLIST:')) {
-                const parts = cmd.slice(8).split('~~~');
-                urlList = parts[0] ? parts[0].split('||') : [];
-                nameList = parts[1] ? parts[1].split('||') : [];
-                currentIndex = parts[2] ? parseInt(parts[2]) : 0;
-                if (urlList[currentIndex]) {
-                    startStream(urlList[currentIndex]);
-                    showChannelInfo(nameList[currentIndex] || '?', currentIndex);
-                }
-            } else if (cmd.startsWith('PLAY:')) {
-                startStream(cmd.slice(5));
-            } else if (cmd.includes('://')) {
-                startStream(cmd);
+                video.oncanplay = () => { spinner.style.display = 'none'; video.play().catch(()=>{}); };
+                video.onerror = () => showError();
             }
         }
 
@@ -209,7 +155,18 @@
                 const cmd = window.AppInventor.getWebViewString();
                 if (cmd && cmd !== currentCmd) {
                     currentCmd = cmd;
-                    handleCommand(cmd);
+                    if (cmd.startsWith('SETLIST:')) {
+                        const parts = cmd.slice(8).split('~~~');
+                        urlList = parts[0].split('||');
+                        nameList = parts[1].split('||');
+                        currentIndex = parseInt(parts[2]) || 0;
+                        startStream(urlList[currentIndex]);
+                        showChannelInfo(nameList[currentIndex], currentIndex);
+                    } else if (cmd.startsWith('PLAY:')) {
+                        startStream(cmd.slice(5));
+                    } else if (cmd.includes('://')) {
+                        startStream(cmd);
+                    }
                 }
             } catch(e) {}
         }, 300);
