@@ -11,146 +11,367 @@
         body, html { width: 100%; height: 100%; background: #000; overflow: hidden; font-family: sans-serif; }
         video { position: absolute; width: 100%; height: 100%; object-fit: contain; z-index: 1; }
 
-        /* Ses aktivasyon overlay */
+        /* Tarayıcının varsayılan odak çerçevesini kapatıyoruz (Çift odaklanmayı engeller) */
+        button:focus { outline: none; }
+
+        /* ── Ses aktivasyon ────────────────────────────────────── */
         #soundOverlay {
             position: fixed; inset: 0; z-index: 1000;
             display: flex; flex-direction: column;
             align-items: center; justify-content: center;
-            background: rgba(0,0,0,0.6); cursor: pointer;
+            background: rgba(0,0,0,0.65); cursor: pointer;
         }
-        #soundOverlay .icon { font-size: 80px; margin-bottom: 20px; }
-        #soundOverlay .text {
-            color: white; font-size: 24px; font-weight: bold;
-            background: rgba(229,9,20,0.9); padding: 16px 40px;
-            border-radius: 50px; border: 3px solid white;
+        #soundOverlay .sicon { font-size: 80px; margin-bottom: 18px; }
+        #soundOverlay .stext {
+            color: #fff; font-size: 22px; font-weight: bold;
+            background: #e50914; padding: 14px 38px;
+            border-radius: 50px; border: 3px solid rgba(255,255,255,0.4);
         }
-        #soundOverlay .sub { color: rgba(255,255,255,0.7); font-size: 16px; margin-top: 14px; }
+        #soundOverlay .ssub { color: rgba(255,255,255,0.6); font-size: 15px; margin-top: 14px; }
         #soundOverlay.hidden { display: none; }
 
-        /* Devam et dialog */
+        /* ── Player Controls Overlay (YouTube-style) ──────────── */
+        #controls {
+            position: fixed; inset: 0; z-index: 600;
+            display: none; flex-direction: column;
+            justify-content: flex-end;
+            background: linear-gradient(transparent 40%, rgba(0,0,0,0.85) 100%);
+        }
+        #controls.visible { display: flex; }
+
+        /* Orta play alanı */
+        #midRow {
+            display: flex; align-items: center; justify-content: center;
+            gap: 32px; padding: 0 0 18px;
+        }
+        .ctrl-btn {
+            background: none; border: none; color: white;
+            cursor: pointer; border-radius: 50%;
+            display: flex; align-items: center; justify-content: center;
+            transition: background 0.15s, transform 0.15s;
+            -webkit-tap-highlight-color: transparent;
+        }
+        .ctrl-btn.seek { width: 64px; height: 64px; font-size: 32px; }
+        .ctrl-btn.play { width: 80px; height: 80px; font-size: 46px; }
+        .ctrl-btn.focused {
+            background: rgba(255,255,255,0.18);
+            transform: scale(1.12);
+            outline: 3px solid rgba(255,255,255,0.7) !important;
+            outline-offset: 2px;
+        }
+        .ctrl-btn .seek-label {
+            position: absolute; bottom: -20px; left: 50%; transform: translateX(-50%);
+            font-size: 11px; color: rgba(255,255,255,0.7); white-space: nowrap;
+        }
+        .ctrl-btn { position: relative; }
+
+        /* Progress bar alanı */
+        #progressArea {
+            padding: 0 24px 10px;
+        }
+        #progressBar {
+            width: 100%; height: 4px; background: rgba(255,255,255,0.3);
+            border-radius: 2px; cursor: pointer; position: relative;
+        }
+        #progressFill { height: 100%; background: #e50914; border-radius: 2px; width: 0%; }
+        #progressHandle {
+            position: absolute; top: 50%; right: 0; transform: translate(50%,-50%);
+            width: 14px; height: 14px; background: white; border-radius: 50%;
+            box-shadow: 0 0 4px rgba(0,0,0,0.5);
+        }
+
+        /* Zaman + alt butonlar */
+        #bottomRow {
+            display: flex; align-items: center; justify-content: space-between;
+            padding: 6px 24px 20px;
+        }
+        #timeText { color: rgba(255,255,255,0.9); font-size: 14px; font-weight: bold; }
+
+        #extraBtns { display: flex; gap: 10px; }
+        .extra-btn {
+            background: rgba(255,255,255,0.1); border: 2px solid rgba(255,255,255,0.25);
+            color: white; border-radius: 8px; padding: 8px 16px;
+            font-size: 13px; font-weight: bold; cursor: pointer;
+            display: flex; align-items: center; gap: 6px;
+            transition: background 0.15s, border-color 0.15s, transform 0.15s;
+            -webkit-tap-highlight-color: transparent;
+        }
+        .extra-btn .ebicon { font-size: 16px; }
+        .extra-btn.focused {
+            background: rgba(229,9,20,0.35);
+            border-color: #e50914;
+            transform: scale(1.08);
+            outline: 2px solid rgba(229,9,20,0.6) !important;
+        }
+
+        /* ── Menü (Kalite/Altyazı/Ses) ────────────────────────── */
+        #menuPanel {
+            position: fixed; bottom: 80px; right: 24px;
+            z-index: 700; background: rgba(18,18,18,0.97);
+            border: 2px solid #e50914; border-radius: 12px;
+            padding: 12px 0; min-width: 200px; max-height: 60vh;
+            overflow-y: auto; display: none;
+        }
+        #menuPanel.visible { display: block; }
+        #menuPanelTitle {
+            color: #aaa; font-size: 11px; padding: 4px 16px 8px;
+            text-transform: uppercase; letter-spacing: 1px;
+            border-bottom: 1px solid #333; margin-bottom: 4px;
+        }
+        .menu-item {
+            color: white; font-size: 15px; padding: 11px 16px; cursor: pointer;
+        }
+        .menu-item.mfocused { background: rgba(229,9,20,0.3); }
+        .menu-item.mactive  { color: #e50914; font-weight: bold; }
+
+        /* ── Toast ─────────────────────────────────────────────── */
+        #toast {
+            position: fixed; top: 20px; left: 50%; transform: translateX(-50%);
+            z-index: 900; background: rgba(30,30,30,0.95); color: white;
+            padding: 11px 22px; border-radius: 10px; font-size: 14px;
+            border: 1px solid #555; opacity: 0; transition: opacity 0.35s;
+            pointer-events: none; white-space: nowrap;
+        }
+
+        /* ── Resume dialog ─────────────────────────────────────── */
         #resumeDialog {
             position: fixed; inset: 0; z-index: 2000;
             display: flex; align-items: center; justify-content: center;
-            background: rgba(0,0,0,0.75);
+            background: rgba(0,0,0,0.78);
         }
         #resumeDialog.hidden { display: none; }
         #resumeBox {
             background: #1a1a1a; border: 2px solid #e50914;
-            border-radius: 16px; padding: 32px 40px;
-            text-align: center; max-width: 480px;
-            color: white;
+            border-radius: 16px; padding: 30px 38px;
+            text-align: center; max-width: 440px; color: white;
         }
-        #resumeBox .title { font-size: 22px; font-weight: bold; margin-bottom: 10px; }
-        #resumeBox .sub   { font-size: 16px; color: #aaa; margin-bottom: 28px; }
-        #resumeBox .btns  { display: flex; gap: 16px; justify-content: center; }
-        #resumeBox button {
-            padding: 12px 28px; border: none; border-radius: 8px;
-            font-size: 17px; font-weight: bold; cursor: pointer;
-        }
-        #btnResume { background: #e50914; color: white; }
-        #btnRestart { background: #333; color: white; border: 2px solid #666; }
-        #btnResume:hover, #btnResume:focus   { background: #ff2020; outline: 3px solid white; }
-        #btnRestart:hover, #btnRestart:focus { background: #444; outline: 3px solid white; }
+        #resumeBox .rtitle { font-size: 20px; font-weight: bold; margin-bottom: 8px; }
+        #resumeBox .rsub   { font-size: 15px; color: #aaa; margin-bottom: 24px; }
+        #resumeBox .rbtns  { display: flex; gap: 14px; justify-content: center; }
+        #resumeBox button  { padding: 11px 26px; border: none; border-radius: 8px; font-size: 16px; font-weight: bold; cursor: pointer; }
+        #btnResume  { background: #e50914; color: white; }
+        #btnRestart { background: #333; color: white; border: 2px solid #555; }
+        #btnResume:focus, #btnRestart:focus { outline: 3px solid white !important; }
 
-        #progressContainer {
-            position: fixed; bottom: 0; left: 0; right: 0; height: 4px;
-            background: rgba(255,255,255,0.2); z-index: 100; cursor: pointer;
-            transition: height 0.2s;
+        /* ── Hata ──────────────────────────────────────────────── */
+        #errorOverlay {
+            position: fixed; inset: 0; z-index: 900;
+            display: flex; flex-direction: column;
+            align-items: center; justify-content: center;
+            background: rgba(0,0,0,0.88);
         }
-        #progressContainer:hover { height: 8px; }
-        #progressBar { height: 100%; background: #e50914; width: 0%; transition: width 0.3s; }
-
-        #timeDisplay {
-            position: fixed; bottom: 10px; right: 14px; z-index: 200;
-            color: white; font-size: 13px; font-weight: bold;
-            background: rgba(0,0,0,0.6); padding: 4px 10px; border-radius: 6px;
-            opacity: 0; transition: opacity 0.4s;
+        #errorOverlay.hidden { display: none; }
+        #errorBox { text-align: center; color: white; max-width: 380px; }
+        #errorBox .eicon  { font-size: 64px; margin-bottom: 14px; }
+        #errorBox .etitle { font-size: 20px; font-weight: bold; margin-bottom: 8px; color: #ff4444; }
+        #errorBox .emsg   { font-size: 15px; color: #999; margin-bottom: 22px; }
+        #btnRetry {
+            background: #e50914; color: white; border: none;
+            padding: 11px 30px; border-radius: 8px; font-size: 16px; font-weight: bold; cursor: pointer;
         }
-        #timeDisplay.visible { opacity: 1; }
+        #btnRetry:focus { outline: 3px solid white !important; }
 
-        #status {
-            position: fixed; top: 12px; left: 12px; z-index: 400;
-            background: rgba(0,0,0,0.75); padding: 7px 13px;
-            border-radius: 8px; font-size: 13px; font-weight: bold;
-            display: none; transition: opacity 0.8s;
-        }
-
+        /* ── Genel ─────────────────────────────────────────────── */
         #skipIndicator {
             position: fixed; top: 50%; z-index: 500;
-            background: rgba(0,0,0,0.6); color: white;
-            padding: 12px 20px; border-radius: 10px; font-size: 18px;
+            background: rgba(0,0,0,0.65); color: white;
+            padding: 10px 18px; border-radius: 10px; font-size: 17px;
             font-weight: bold; display: none;
         }
-        #skipIndicator.left  { left: 15%; transform: translateY(-50%); }
-        #skipIndicator.right { right: 15%; transform: translateY(-50%); }
+        #skipIndicator.left  { left: 14%; transform: translateY(-50%); }
+        #skipIndicator.right { right: 14%; transform: translateY(-50%); }
 
         #volumeIndicator {
-            position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%);
-            z-index: 500; background: rgba(0,0,0,0.7); color: white;
-            padding: 14px 22px; border-radius: 10px; font-size: 20px; display: none;
+            position: fixed; top: 50%; left: 50%; transform: translate(-50%,-50%);
+            z-index: 500; background: rgba(0,0,0,0.72); color: white;
+            padding: 13px 20px; border-radius: 10px; font-size: 19px; display: none;
         }
 
         #spinner {
-            position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%);
+            position: fixed; top: 50%; left: 50%; transform: translate(-50%,-50%);
             z-index: 300; width: 50px; height: 50px;
             border: 4px solid rgba(255,255,255,0.2);
             border-top: 4px solid #e50914; border-radius: 50%;
             display: none; animation: spin 0.8s linear infinite;
         }
-        @keyframes spin { to { transform: translate(-50%, -50%) rotate(360deg); } }
+        @keyframes spin { to { transform: translate(-50%,-50%) rotate(360deg); } }
     </style>
 </head>
 <body>
     <video id="video" playsinline autoplay muted></video>
 
     <div id="soundOverlay">
-        <div class="icon">🔇</div>
-        <div class="text">🔊 Sese Başla</div>
-        <div class="sub">Herhangi bir tuşa bas veya tıkla</div>
+        <div class="sicon">🔇</div>
+        <div class="stext">🔊 Sese Başla</div>
+        <div class="ssub">Herhangi bir tuşa bas veya tıkla</div>
     </div>
+
+    <div id="controls">
+        <div id="midRow">
+            <button class="ctrl-btn seek" id="btnRewind">
+                ⏪<span class="seek-label">-10 sn</span>
+            </button>
+            <button class="ctrl-btn play" id="btnPlay">▶</button>
+            <button class="ctrl-btn seek" id="btnFwd">
+                ⏩<span class="seek-label">+10 sn</span>
+            </button>
+        </div>
+
+        <div id="progressArea">
+            <div id="progressBar">
+                <div id="progressFill"></div>
+                <div id="progressHandle"></div>
+            </div>
+        </div>
+
+        <div id="bottomRow">
+            <span id="timeText">0:00 / 0:00</span>
+            <div id="extraBtns">
+                <button class="extra-btn" id="btnAudio">
+                    <span class="ebicon">🔊</span>Ses
+                </button>
+                <button class="extra-btn" id="btnSub">
+                    <span class="ebicon">💬</span>Altyazı
+                </button>
+                <button class="extra-btn" id="btnQual">
+                    <span class="ebicon">🎬</span>Kalite
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <div id="menuPanel">
+        <div id="menuPanelTitle"></div>
+        <div id="menuList"></div>
+    </div>
+
+    <div id="toast"></div>
 
     <div id="resumeDialog" class="hidden">
         <div id="resumeBox">
-            <div class="title">📽️ Kaldığın Yerden Devam Et</div>
-            <div class="sub" id="resumeSub">Filmi <b id="resumeTime"></b> dakikasından izlemiştin.</div>
-            <div class="btns">
+            <div class="rtitle">📽️ Kaldığın Yerden Devam Et</div>
+            <div class="rsub"><b id="resumeTime"></b> dakikasında bırakmıştın.</div>
+            <div class="rbtns">
                 <button id="btnResume">▶ Devam Et</button>
                 <button id="btnRestart">↺ Baştan Başla</button>
             </div>
         </div>
     </div>
 
+    <div id="errorOverlay" class="hidden">
+        <div id="errorBox">
+            <div class="eicon">📡</div>
+            <div class="etitle">Yayın Açılamadı</div>
+            <div class="emsg" id="errorMsg">Bu içerik şu an kullanılamıyor.</div>
+            <button id="btnRetry">🔄 Tekrar Dene</button>
+        </div>
+    </div>
+
     <div id="spinner"></div>
-    <div id="status"></div>
     <div id="skipIndicator"></div>
     <div id="volumeIndicator"></div>
-    <div id="progressContainer"><div id="progressBar"></div></div>
-    <div id="timeDisplay"></div>
 
     <script>
         const WORKER = 'https://filmvedizi.efendikral54.workers.dev/';
 
-        const video           = document.getElementById('video');
-        const progressBar     = document.getElementById('progressBar');
-        const progressCont    = document.getElementById('progressContainer');
-        const timeDisplay     = document.getElementById('timeDisplay');
-        const spinner         = document.getElementById('spinner');
-        const statusEl        = document.getElementById('status');
-        const skipIndicator   = document.getElementById('skipIndicator');
-        const volumeIndicator = document.getElementById('volumeIndicator');
-        const soundOverlay    = document.getElementById('soundOverlay');
-        const resumeDialog    = document.getElementById('resumeDialog');
-        const resumeTime      = document.getElementById('resumeTime');
-        const btnResume       = document.getElementById('btnResume');
-        const btnRestart      = document.getElementById('btnRestart');
+        const video       = document.getElementById('video');
+        const controls    = document.getElementById('controls');
+        const progressFill= document.getElementById('progressFill');
+        const progressHnd = document.getElementById('progressHandle');
+        const progressBar = document.getElementById('progressBar');
+        const timeText    = document.getElementById('timeText');
+        const spinner     = document.getElementById('spinner');
+        const skipInd     = document.getElementById('skipIndicator');
+        const volInd      = document.getElementById('volumeIndicator');
+        const soundOvl    = document.getElementById('soundOverlay');
+        const menuPanel   = document.getElementById('menuPanel');
+        const menuList    = document.getElementById('menuList');
+        const menuTitle   = document.getElementById('menuPanelTitle');
+        const toast       = document.getElementById('toast');
+        const resumeDialog= document.getElementById('resumeDialog');
+        const resumeTimeEl= document.getElementById('resumeTime');
+        const btnResume   = document.getElementById('btnResume');
+        const btnRestart  = document.getElementById('btnRestart');
+        const errorOvl    = document.getElementById('errorOverlay');
+        const errorMsg    = document.getElementById('errorMsg');
+        const btnRetry    = document.getElementById('btnRetry');
 
         let hlsPlayer = null, tsPlayer = null;
         let hasInteracted = false;
-        let lastCmd = '';
-        let currentUrl = '';
-        let statusTimer = null, skipTimer = null, volTimer = null, timeTimer = null;
-        let saveTimer = null;
-        let resumeFocused = 'resume'; // hangi buton focused
+        let lastCmd = '', currentUrl = '';
+        let skipT = null, volT = null, ctrlHideT = null, toastT = null;
+        let resumeFocused = 'resume';
+
+        // ── Navigasyon yapısı ────────────────────────────────────
+        // Satır 0: [rewind(0), play(1), fwd(2)]
+        // Satır 1: [audio(3), sub(4), qual(5)]
+        const ROW0 = [
+            document.getElementById('btnRewind'),
+            document.getElementById('btnPlay'),
+            document.getElementById('btnFwd'),
+        ];
+        const ROW1 = [
+            document.getElementById('btnAudio'),
+            document.getElementById('btnSub'),
+            document.getElementById('btnQual'),
+        ];
+        const ROWS = [ROW0, ROW1];
+
+        let curRow = 0, curCol = 1; // başlangıç: Play
+        let ctrlOpen = false;
+        let menuOpen = false;
+        let menuItems = [], menuFocusIdx = 0, menuMode = '';
+
+        function allBtns() { return [...ROW0, ...ROW1]; }
+
+        function clearFocus() {
+            allBtns().forEach(b => b.classList.remove('focused'));
+            document.querySelectorAll('.extra-btn').forEach(b => b.classList.remove('focused'));
+        }
+
+        function applyFocus() {
+            clearFocus();
+            const row = ROWS[curRow];
+            if (row && row[curCol]) row[curCol].classList.add('focused');
+        }
+
+        // ── Controls göster/gizle ────────────────────────────────
+        function showControls() {
+            controls.classList.add('visible');
+            ctrlOpen = true;
+            curRow = 0; curCol = 1; // Play'e dön
+            applyFocus();
+            resetCtrlHide();
+        }
+
+        function hideControls() {
+            controls.classList.remove('visible');
+            clearFocus();
+            // Gizli odak kalmasını engelle (Çift odaklanmayı çözer)
+            if (document.activeElement) {
+                document.activeElement.blur();
+            }
+            ctrlOpen = false;
+            if (ctrlHideT) clearTimeout(ctrlHideT);
+        }
+
+        function resetCtrlHide() {
+            if (ctrlHideT) clearTimeout(ctrlHideT);
+            if (!video.paused) {
+                ctrlHideT = setTimeout(hideControls, 4000);
+            }
+        }
+
+        video.addEventListener('pause', () => {
+            if (!hasInteracted) return;
+            if (!resumeDialog.classList.contains('hidden')) return;
+            showControls();
+            document.getElementById('btnPlay').textContent = '▶';
+        });
+        video.addEventListener('play', () => {
+            document.getElementById('btnPlay').textContent = '⏸';
+            resetCtrlHide();
+        });
 
         // ── Ses aktivasyonu ──────────────────────────────────────
         function activateSound() {
@@ -159,304 +380,335 @@
             video.muted  = false;
             video.volume = 1.0;
             video.play().catch(() => {});
-            soundOverlay.classList.add('hidden');
+            soundOvl.classList.add('hidden');
+        }
+        soundOvl.addEventListener('click', activateSound);
+
+        // ── Toast ─────────────────────────────────────────────────
+        function showToast(msg) {
+            if (toastT) clearTimeout(toastT);
+            toast.textContent  = msg;
+            toast.style.opacity = '1';
+            toastT = setTimeout(() => { toast.style.opacity = '0'; }, 2500);
         }
 
-        soundOverlay.addEventListener('click', activateSound);
-
-        // ── İzleme pozisyonu kaydet/yükle ────────────────────────
-        function getStorageKey(url) {
-            // URL'den basit bir anahtar oluştur
-            return 'pos_' + btoa(url).replace(/[^a-zA-Z0-9]/g, '').substring(0, 50);
+        // ── Hata ─────────────────────────────────────────────────
+        function showError(msg) {
+            spinner.style.display = 'none';
+            errorMsg.textContent  = msg;
+            errorOvl.classList.remove('hidden');
         }
+        function hideError() { errorOvl.classList.add('hidden'); }
+        btnRetry.addEventListener('click', () => { hideError(); if (currentUrl) startStream(currentUrl); });
 
-        function savePosition() {
-            if (!currentUrl || !video.duration || isNaN(video.duration)) return;
-            if (video.currentTime < 10) return; // 10 saniyeden az izlendiyse kaydetme
-            const pct = video.currentTime / video.duration;
-            if (pct > 0.95) {
-                // Filmin sonuna geldiyse kaydı sil
-                localStorage.removeItem(getStorageKey(currentUrl));
-                return;
+        // ── Buton aksiyonları ────────────────────────────────────
+        document.getElementById('btnPlay').addEventListener('click', () => {
+            if (video.paused) video.play(); else video.pause();
+        });
+        document.getElementById('btnRewind').addEventListener('click', () => { seek(-10); });
+        document.getElementById('btnFwd').addEventListener('click', () => { seek(10); });
+        document.getElementById('btnQual').addEventListener('click', () => { hideControls(); openMenu('quality'); });
+        document.getElementById('btnSub').addEventListener('click', () => { hideControls(); openMenu('subtitle'); });
+        document.getElementById('btnAudio').addEventListener('click', () => { hideControls(); openMenu('audio'); });
+
+        // ── Menü ─────────────────────────────────────────────────
+        function openMenu(mode) {
+            if (!hlsPlayer) { showToast('⚠️ Oynatıcı hazır değil'); return; }
+            menuMode = mode; menuList.innerHTML = ''; menuItems = [];
+
+            if (mode === 'quality') {
+                const lvls = hlsPlayer.levels;
+                if (!lvls || lvls.length < 2) { showToast('ℹ️ Tek kalite mevcut'); return; }
+                menuTitle.textContent = '🎬 Kalite Seç';
+                addMItem('🔄 Otomatik', -1, hlsPlayer.currentLevel === -1);
+                [...lvls].reverse().forEach((l, ri) => {
+                    const i = lvls.length - 1 - ri;
+                    addMItem('📺 ' + (l.height ? l.height + 'p' : 'Seviye ' + (i+1)), i, hlsPlayer.currentLevel === i);
+                });
+
+            } else if (mode === 'subtitle') {
+                const trks = hlsPlayer.subtitleTracks;
+                if (!trks || trks.length === 0) { showToast('ℹ️ Altyazı bulunamadı'); return; }
+                menuTitle.textContent = '💬 Altyazı Seç';
+                addMItem('🚫 Kapalı', -1, hlsPlayer.subtitleTrack === -1);
+                trks.forEach((t, i) => addMItem('💬 ' + (t.name || t.lang || 'Altyazı ' + (i+1)), i, hlsPlayer.subtitleTrack === i));
+
+            } else { // audio
+                const atrks = hlsPlayer.audioTracks;
+                if (!atrks || atrks.length < 2) { showToast('ℹ️ Tek ses kanalı mevcut'); return; }
+                menuTitle.textContent = '🔊 Ses / Dil Seç';
+                atrks.forEach((t, i) => addMItem('🔊 ' + (t.name || t.lang || 'Ses ' + (i+1)), i, hlsPlayer.audioTrack === i));
             }
-            localStorage.setItem(getStorageKey(currentUrl), JSON.stringify({
-                time: video.currentTime,
-                duration: video.duration,
-                saved: Date.now()
-            }));
+
+            menuPanel.classList.add('visible');
+            menuOpen = true; menuFocusIdx = 0; updateMFocus();
         }
 
-        function loadPosition(url) {
-            try {
-                const data = JSON.parse(localStorage.getItem(getStorageKey(url)));
-                if (data && data.time > 10) return data;
-            } catch(e) {}
-            return null;
+        function addMItem(label, value, isActive) {
+            const el = document.createElement('div');
+            el.className   = 'menu-item' + (isActive ? ' mactive' : '');
+            el.textContent = label;
+            el.dataset.value = String(value);
+            el.addEventListener('click', () => applyMenu(value));
+            menuList.appendChild(el);
+            menuItems.push(el);
         }
 
-        function showResumeDialog(savedTime) {
-            const min = Math.floor(savedTime / 60);
-            const sec = Math.floor(savedTime % 60);
-            resumeTime.textContent = min + ':' + String(sec).padStart(2,'0');
-            resumeDialog.classList.remove('hidden');
-            btnResume.focus();
-            resumeFocused = 'resume';
+        function applyMenu(value) {
+            if (!hlsPlayer) return;
+            if (menuMode === 'quality')   hlsPlayer.currentLevel  = value;
+            else if (menuMode === 'subtitle') hlsPlayer.subtitleTrack = value;
+            else                          hlsPlayer.audioTrack    = value;
+            closeMenu();
         }
 
-        btnResume.addEventListener('click', () => {
-            const data = loadPosition(currentUrl);
-            if (data) video.currentTime = data.time;
-            resumeDialog.classList.add('hidden');
-            if (hasInteracted) { video.muted = false; video.play(); }
-        });
-
-        btnRestart.addEventListener('click', () => {
-            video.currentTime = 0;
-            resumeDialog.classList.add('hidden');
-            localStorage.removeItem(getStorageKey(currentUrl));
-            if (hasInteracted) { video.muted = false; video.play(); }
-        });
-
-        // ── Yardımcılar ──────────────────────────────────────────
-        function formatTime(sec) {
-            if (isNaN(sec) || !isFinite(sec)) return '0:00';
-            const h = Math.floor(sec / 3600);
-            const m = Math.floor((sec % 3600) / 60);
-            const s = Math.floor(sec % 60);
-            if (h > 0) return h + ':' + String(m).padStart(2,'0') + ':' + String(s).padStart(2,'0');
-            return m + ':' + String(s).padStart(2,'0');
+        function closeMenu() {
+            menuPanel.classList.remove('visible');
+            menuOpen = false;
         }
 
-        function showStatus(text, color) {
-            if (statusTimer) clearTimeout(statusTimer);
-            statusEl.style.color   = color || '#ffcc00';
-            statusEl.textContent   = text;
-            statusEl.style.display = 'block';
-            statusEl.style.opacity = '1';
-            statusTimer = setTimeout(() => {
-                statusEl.style.opacity = '0';
-                setTimeout(() => { statusEl.style.display = 'none'; }, 800);
-            }, 5000);
-        }
-
-        function showSkip(side, text) {
-            if (skipTimer) clearTimeout(skipTimer);
-            skipIndicator.textContent = text;
-            skipIndicator.className   = side;
-            skipIndicator.style.display = 'block';
-            skipTimer = setTimeout(() => { skipIndicator.style.display = 'none'; }, 800);
-        }
-
-        function showVolume(pct) {
-            if (volTimer) clearTimeout(volTimer);
-            volumeIndicator.textContent = '🔊 ' + pct + '%';
-            volumeIndicator.style.display = 'block';
-            volTimer = setTimeout(() => { volumeIndicator.style.display = 'none'; }, 1200);
-        }
-
-        function showTime() {
-            if (timeTimer) clearTimeout(timeTimer);
-            timeDisplay.classList.add('visible');
-            timeTimer = setTimeout(() => { timeDisplay.classList.remove('visible'); }, 3000);
+        function updateMFocus() {
+            menuItems.forEach((el, i) => el.classList.toggle('mfocused', i === menuFocusIdx));
+            if (menuItems[menuFocusIdx]) menuItems[menuFocusIdx].scrollIntoView({ block: 'nearest' });
         }
 
         // ── Progress ─────────────────────────────────────────────
+        function fmtTime(sec) {
+            if (!sec || isNaN(sec) || !isFinite(sec)) return '0:00';
+            const h=Math.floor(sec/3600), m=Math.floor((sec%3600)/60), s=Math.floor(sec%60);
+            if (h>0) return h+':'+String(m).padStart(2,'0')+':'+String(s).padStart(2,'0');
+            return m+':'+String(s).padStart(2,'0');
+        }
+
         video.addEventListener('timeupdate', () => {
             if (!video.duration || isNaN(video.duration)) return;
             const pct = (video.currentTime / video.duration) * 100;
-            progressBar.style.width = pct + '%';
-            timeDisplay.textContent = formatTime(video.currentTime) + ' / ' + formatTime(video.duration);
+            progressFill.style.width = pct + '%';
+            progressHnd.style.left   = pct + '%';
+            timeText.textContent = fmtTime(video.currentTime) + ' / ' + fmtTime(video.duration);
         });
 
-        // Her 5 dakikada bir pozisyonu kaydet
-        setInterval(savePosition, 300000);
-        window.addEventListener('beforeunload', savePosition);
-
-        progressCont.addEventListener('click', (e) => {
-            const rect = progressCont.getBoundingClientRect();
-            video.currentTime = ((e.clientX - rect.left) / rect.width) * (video.duration || 0);
-            showTime();
+        progressBar.addEventListener('click', (e) => {
+            const r = progressBar.getBoundingClientRect();
+            video.currentTime = ((e.clientX - r.left) / r.width) * (video.duration || 0);
         });
-
-        progressCont.addEventListener('touchmove', (e) => {
-            const rect = progressCont.getBoundingClientRect();
-            const pct  = Math.max(0, Math.min(1, (e.touches[0].clientX - rect.left) / rect.width));
-            video.currentTime = pct * (video.duration || 0);
-            showTime();
+        progressBar.addEventListener('touchmove', (e) => {
+            const r = progressBar.getBoundingClientRect();
+            video.currentTime = Math.max(0, Math.min(1, (e.touches[0].clientX - r.left) / r.width)) * (video.duration || 0);
         });
 
         video.addEventListener('waiting', () => { spinner.style.display = 'block'; });
         video.addEventListener('playing', () => { spinner.style.display = 'none'; });
         video.addEventListener('canplay', () => { spinner.style.display = 'none'; });
 
-        // ── Touch ────────────────────────────────────────────────
+        // ── Touch ─────────────────────────────────────────────────
         let lastTap = 0;
         video.addEventListener('touchend', (e) => {
             if (!hasInteracted) { activateSound(); return; }
+            if (menuOpen) return;
             const now = Date.now();
             if (now - lastTap < 300) {
                 seek(e.changedTouches[0].clientX < window.innerWidth / 2 ? -10 : 10);
-            } else { togglePlay(); }
+            } else {
+                if (ctrlOpen) hideControls(); else showControls();
+            }
             lastTap = now;
         });
 
         function seek(sec) {
             video.currentTime = Math.max(0, Math.min(video.duration || 0, video.currentTime + sec));
-            showSkip(sec < 0 ? 'left' : 'right', (sec < 0 ? '⏪ ' : '⏩ ') + Math.abs(sec) + 's');
-            showTime();
-        }
-
-        function togglePlay() {
-            if (video.paused) video.play();
-            else video.pause();
+            const side = sec < 0 ? 'left' : 'right';
+            skipInd.textContent = (sec < 0 ? '⏪ ' : '⏩ ') + Math.abs(sec) + ' sn';
+            skipInd.className   = side;
+            skipInd.style.display = 'block';
+            if (skipT) clearTimeout(skipT);
+            skipT = setTimeout(() => { skipInd.style.display = 'none'; }, 800);
+            resetCtrlHide();
         }
 
         // ── Klavye ───────────────────────────────────────────────
         window.addEventListener('keydown', (e) => {
-            // Önce ses aktivasyonu
-            if (!hasInteracted) {
-                activateSound();
-                return; // İlk tuş sadece ses açar, başka şey yapmaz!
+            // ANDROID TV ÇİFT ODAKLANMA ÇÖZÜMÜ: Tarayıcının varsayılan hareketini iptal et
+            if ([37, 38, 39, 40, 13].includes(e.keyCode)) {
+                e.preventDefault();
             }
 
-            // Resume dialog açıksa → buton navigasyonu
+            if (!hasInteracted) { activateSound(); return; }
+
+            // Resume dialog
             if (!resumeDialog.classList.contains('hidden')) {
-                if (e.keyCode === 37 || e.keyCode === 39) {
-                    // Sol/Sağ → butonlar arası geç
-                    if (resumeFocused === 'resume') {
-                        resumeFocused = 'restart';
-                        btnRestart.focus();
-                    } else {
-                        resumeFocused = 'resume';
-                        btnResume.focus();
-                    }
-                } else if (e.keyCode === 13) {
-                    // OK → focused butonu tıkla
-                    if (resumeFocused === 'resume') btnResume.click();
-                    else btnRestart.click();
+                if (e.keyCode===37||e.keyCode===39) {
+                    resumeFocused = resumeFocused==='resume'?'restart':'resume';
+                    (resumeFocused==='resume'?btnResume:btnRestart).focus();
+                } else if (e.keyCode===13) {
+                    (resumeFocused==='resume'?btnResume:btnRestart).click();
                 }
                 return;
             }
 
-            showTime();
-            switch(e.keyCode) {
-                case 13:  togglePlay(); break;
-                case 39: case 228: seek(10);  break;
-                case 37: case 227: seek(-10); break;
-                case 38:
-                    video.muted = false;
-                    video.volume = Math.min(1, Math.round((video.volume + 0.1) * 10) / 10);
-                    showVolume(Math.round(video.volume * 100)); break;
-                case 40:
-                    video.volume = Math.max(0, Math.round((video.volume - 0.1) * 10) / 10);
-                    showVolume(Math.round(video.volume * 100)); break;
+            // Hata ekranı
+            if (!errorOvl.classList.contains('hidden')) {
+                if (e.keyCode===13) btnRetry.click();
+                return;
+            }
+
+            // Menü açık
+            if (menuOpen) {
+                if (e.keyCode===38) { menuFocusIdx=Math.max(0,menuFocusIdx-1); updateMFocus(); }
+                else if (e.keyCode===40) { menuFocusIdx=Math.min(menuItems.length-1,menuFocusIdx+1); updateMFocus(); }
+                else if (e.keyCode===13) { if (menuItems[menuFocusIdx]) applyMenu(parseInt(menuItems[menuFocusIdx].dataset.value)); }
+                else if (e.keyCode===8||e.keyCode===27) closeMenu();
+                return;
+            }
+
+            // Controls kapalı → OK veya ⬅️➡️ açar
+            if (!ctrlOpen) {
+                if (e.keyCode===13) { showControls(); return; }
+                if (e.keyCode===39||e.keyCode===228) { seek(10); return; }
+                if (e.keyCode===37||e.keyCode===227) { seek(-10); return; }
+                if (e.keyCode===38) { video.muted=false; video.volume=Math.min(1,Math.round((video.volume+0.1)*10)/10); showVol(); return; }
+                if (e.keyCode===40) { video.volume=Math.max(0,Math.round((video.volume-0.1)*10)/10); showVol(); return; }
+                return;
+            }
+
+            // Controls açık — navigasyon
+            resetCtrlHide();
+
+            if (e.keyCode===37) { // Sol
+                curCol = Math.max(0, curCol - 1); applyFocus();
+            } else if (e.keyCode===39) { // Sağ
+                curCol = Math.min(ROWS[curRow].length - 1, curCol + 1); applyFocus();
+            } else if (e.keyCode===38) { // Yukarı
+                if (curRow > 0) {
+                    curRow--;
+                    curCol = Math.min(curCol, ROWS[curRow].length - 1);
+                    applyFocus();
+                } else {
+                    // Zaten en üstte → ses
+                    video.muted=false; video.volume=Math.min(1,Math.round((video.volume+0.1)*10)/10); showVol();
+                }
+            } else if (e.keyCode===40) { // Aşağı
+                if (curRow < ROWS.length - 1) {
+                    curRow++;
+                    curCol = Math.min(curCol, ROWS[curRow].length - 1);
+                    applyFocus();
+                } else {
+                    // En altta → ses azalt
+                    video.volume=Math.max(0,Math.round((video.volume-0.1)*10)/10); showVol();
+                }
+            } else if (e.keyCode===13) { // OK
+                const btn = ROWS[curRow][curCol];
+                if (btn) btn.click();
+            } else if (e.keyCode===8||e.keyCode===27) {
+                hideControls();
             }
         });
 
-        // ── Player ───────────────────────────────────────────────
-        function stopExistingPlayers() {
-            savePosition();
-            if (hlsPlayer) { hlsPlayer.destroy(); hlsPlayer = null; }
-            if (tsPlayer)  {
-                tsPlayer.unload(); tsPlayer.detachMediaElement();
-                tsPlayer.destroy(); tsPlayer = null;
-            }
-            video.src = "";
+        function showVol() {
+            if (volT) clearTimeout(volT);
+            volInd.textContent = '🔊 ' + Math.round(video.volume * 100) + '%';
+            volInd.style.display = 'block';
+            volT = setTimeout(() => { volInd.style.display = 'none'; }, 1200);
         }
 
-        function afterStreamLoaded() {
-            showStatus('✅ Film hazır', '#00ff00');
-            video.play().catch(() => {});
-            if (hasInteracted) { video.muted = false; video.volume = 1.0; }
+        // ── İzleme pozisyonu ─────────────────────────────────────
+        function getKey(url) {
+            try { return 'pos_' + btoa(unescape(encodeURIComponent(url))).replace(/[^a-zA-Z0-9]/g,'').substring(0,50); }
+            catch(e) { return 'pos_x'; }
+        }
+        function savePos() {
+            if (!currentUrl||!video.duration||isNaN(video.duration)) return;
+            if (video.currentTime < 30) return;
+            if (video.currentTime/video.duration > 0.95) { localStorage.removeItem(getKey(currentUrl)); return; }
+            localStorage.setItem(getKey(currentUrl), JSON.stringify({ time: video.currentTime }));
+        }
+        function loadPos(url) {
+            try { const d=JSON.parse(localStorage.getItem(getKey(url))); if (d&&d.time>30) return d; } catch(e) {}
+            return null;
+        }
+        setInterval(savePos, 300000);
+        window.addEventListener('beforeunload', savePos);
 
-            // Kaydedilmiş pozisyon var mı?
-            const saved = loadPosition(currentUrl);
-            if (saved && saved.time > 10) {
-                video.pause();
-                showResumeDialog(saved.time);
-            }
+        function showResumeDialog(t) {
+            const m=Math.floor(t/60), s=Math.floor(t%60);
+            resumeTimeEl.textContent = m+':'+String(s).padStart(2,'0');
+            resumeDialog.classList.remove('hidden');
+            btnResume.focus(); resumeFocused='resume';
+        }
+        btnResume.addEventListener('click', () => {
+            const d=loadPos(currentUrl); if (d) video.currentTime=d.time;
+            resumeDialog.classList.add('hidden');
+            if (hasInteracted) { video.muted=false; video.play(); }
+        });
+        btnRestart.addEventListener('click', () => {
+            video.currentTime=0; resumeDialog.classList.add('hidden');
+            localStorage.removeItem(getKey(currentUrl));
+            if (hasInteracted) { video.muted=false; video.play(); }
+        });
+
+        // ── Player ───────────────────────────────────────────────
+        function stopAll() {
+            savePos();
+            if (hlsPlayer) { hlsPlayer.destroy(); hlsPlayer=null; }
+            if (tsPlayer)  { tsPlayer.unload(); tsPlayer.detachMediaElement(); tsPlayer.destroy(); tsPlayer=null; }
+            video.src='';
+        }
+
+        function afterLoaded() {
+            hideError(); spinner.style.display='none';
+            video.play().catch(()=>{});
+            if (hasInteracted) { video.muted=false; video.volume=1.0; }
+            const saved=loadPos(currentUrl);
+            if (saved) { video.pause(); showResumeDialog(saved.time); }
         }
 
         function playUrl(url) {
-            stopExistingPlayers();
-            spinner.style.display = 'block';
-            const lo = url.toLowerCase();
-            const isTS = lo.includes('.ts') && !lo.includes('workers.dev');
+            stopAll(); hideError(); spinner.style.display='block';
+            const lo=url.toLowerCase();
+            const isTS=lo.includes('.ts')&&!lo.includes('workers.dev');
 
             if (isTS && mpegts.getFeatureList().mseLivePlayback) {
-                tsPlayer = mpegts.createPlayer({ type: 'mse', isLive: true, url,
-                    config: { enableWorker: true, liveBufferLatencyChasing: true }
-                });
-                tsPlayer.attachMediaElement(video);
-                tsPlayer.load();
-                video.play();
-                showStatus('✅ Yayın başladı', '#00ff00');
-
+                tsPlayer=mpegts.createPlayer({type:'mse',isLive:true,url,config:{enableWorker:true,liveBufferLatencyChasing:true}});
+                tsPlayer.attachMediaElement(video); tsPlayer.load(); video.play();
             } else if (Hls.isSupported()) {
-                hlsPlayer = new Hls({
-                    startLevel: -1, autoStartLoad: true, startFragPrefetch: true,
-                    maxBufferLength: 60, enableWorker: true,
-                    xhrSetup: xhr => { xhr.withCredentials = false; }
-                });
-                hlsPlayer.loadSource(url);
-                hlsPlayer.attachMedia(video);
-                hlsPlayer.on(Hls.Events.MANIFEST_PARSED, afterStreamLoaded);
-                hlsPlayer.on(Hls.Events.ERROR, (e, data) => {
+                hlsPlayer=new Hls({startLevel:-1,autoStartLoad:true,startFragPrefetch:true,maxBufferLength:60,enableWorker:true,subtitleDisplay:true,xhrSetup:xhr=>{xhr.withCredentials=false;}});
+                hlsPlayer.loadSource(url); hlsPlayer.attachMedia(video);
+                hlsPlayer.on(Hls.Events.MANIFEST_PARSED, afterLoaded);
+                hlsPlayer.on(Hls.Events.ERROR, (e,data) => {
                     if (data.fatal) {
-                        hlsPlayer.destroy(); hlsPlayer = null;
-                        video.src = url; video.load();
-                        video.addEventListener('canplay', afterStreamLoaded, { once: true });
+                        hlsPlayer.destroy(); hlsPlayer=null;
+                        const msgs={[Hls.ErrorTypes.NETWORK_ERROR]:'İnternet bağlantısı kesildi.',[Hls.ErrorTypes.MEDIA_ERROR]:'Bu format desteklenmiyor.'};
+                        showError(msgs[data.type]||'Yayın açılamadı. Lütfen tekrar deneyin.');
                     }
                 });
             } else {
-                video.src = url; video.load();
-                video.addEventListener('canplay', afterStreamLoaded, { once: true });
+                video.src=url; video.load();
+                video.addEventListener('canplay',afterLoaded,{once:true});
+                video.addEventListener('error',()=>showError('Bu format desteklenmiyor.'),{once:true});
             }
         }
 
         function isDirectStream(url) {
-            const lo = url.toLowerCase();
-            return lo.includes('.m3u8') || lo.includes('.ts')  ||
-                   lo.includes('.mp4')  || lo.includes('.mkv') ||
-                   lo.includes('.avi')  || lo.includes('.gif') ||
-                   lo.includes('type=m3u_plus') || lo.includes('workers.dev');
+            const lo=url.toLowerCase();
+            return lo.includes('.m3u8')||lo.includes('.ts')||lo.includes('.mp4')||lo.includes('.mkv')||lo.includes('.avi')||lo.includes('.gif')||lo.includes('type=m3u_plus')||lo.includes('workers.dev');
         }
 
         async function startStream(url) {
             if (!url) return;
-            currentUrl = url;
-
+            currentUrl=url; hideError();
             if (url.toLowerCase().includes('.txt')) {
-                try {
-                    showStatus('⏳ Link çözümleniyor...', '#ffcc00');
-                    const res  = await fetch(url);
-                    const text = (await res.text()).trim();
-                    if (text.startsWith('http')) { startStream(text.split('\n')[0].trim()); return; }
-                } catch(e) {}
+                try { spinner.style.display='block'; const res=await fetch(url); const t=(await res.text()).trim(); if (t.startsWith('http')) { startStream(t.split('\n')[0].trim()); return; } }
+                catch(e) { showError('Link çözümlenemedi.'); return; }
             }
-
             if (isDirectStream(url)) { playUrl(url); return; }
-
-            showStatus('⏳ Film yükleniyor...', '#ffcc00');
-            spinner.style.display = 'block';
-            playUrl(WORKER + '?url=' + encodeURIComponent(url) + '&mode=manifest');
+            spinner.style.display='block';
+            playUrl(WORKER+'?url='+encodeURIComponent(url)+'&mode=manifest');
         }
 
-        // ── App Inventor polling ──────────────────────────────────
         setInterval(() => {
-            try {
-                const cmd = window.AppInventor.getWebViewString();
-                if (cmd && cmd !== lastCmd) {
-                    lastCmd = cmd;
-                    startStream(cmd);
-                }
-            } catch(e) {}
+            try { const cmd=window.AppInventor.getWebViewString(); if (cmd&&cmd!==lastCmd) { lastCmd=cmd; startStream(cmd); } } catch(e) {}
         }, 300);
-
-        try {
-            const initUrl = window.AppInventor.getWebViewString();
-            if (initUrl) { lastCmd = initUrl; startStream(initUrl); }
-        } catch(e) {}
+        try { const u=window.AppInventor.getWebViewString(); if (u) { lastCmd=u; startStream(u); } } catch(e) {}
     </script>
 </body>
 </html>
