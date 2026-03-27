@@ -12,9 +12,8 @@
             background-color: #000; overflow: hidden; 
             display: flex; justify-content: center; align-items: center;
         }
-        video { position: absolute; width: 100%; height: 100%; object-fit: contain; z-index: 1; transition: object-fit 0.3s; }
+        video { position: absolute; width: 100%; height: 100%; object-fit: contain; z-index: 1; }
         
-        /* Yeni: Modern Lade-Spinner */
         #spinner {
             position: fixed; top: 50%; left: 50%; transform: translate(-50%,-50%);
             z-index: 300; width: 60px; height: 60px;
@@ -24,7 +23,6 @@
         }
         @keyframes spin { to { transform: translate(-50%,-50%) rotate(360deg); } }
 
-        /* Kanal Bilgisi */
         #channelInfo {
             position: fixed; bottom: 30px; left: 50%; transform: translateX(-50%);
             z-index: 200; color: white; font-family: sans-serif; font-size: 22px;
@@ -34,15 +32,6 @@
             display: none; transition: opacity 0.5s;
         }
 
-        /* Yeni: Ekran Formatı Bilgisi */
-        #aspectToast {
-            position: fixed; top: 20px; right: 20px; z-index: 400;
-            background: rgba(0,0,0,0.85); color: white; padding: 10px 20px;
-            border-radius: 8px; font-family: sans-serif; font-size: 16px; font-weight: bold;
-            display: none; transition: opacity 0.5s; border: 1px solid #e50914;
-        }
-
-        /* Durum Mesajları */
         #streamStatus {
             position: fixed; top: 20px; left: 20px; z-index: 300;
             font-family: sans-serif; font-size: 14px; font-weight: bold;
@@ -50,51 +39,25 @@
             display: none; transition: opacity 0.8s;
         }
         #streamStatus.bilgi      { background: rgba(0,0,0,0.75); color: #fff; border: 1px solid #fff; }
-        #streamStatus.basarili   { background: rgba(0,80,0,0.8);  color: #00ff00; border: 1px solid #00ff00; }
         #streamStatus.hata       { background: rgba(80,0,0,0.8);  color: #ff4444; border: 1px solid #ff4444; }
     </style>
 </head>
 <body>
     <video id="video" playsinline autoplay muted></video>
-    
     <div id="spinner"></div>
     <div id="channelInfo"></div>
     <div id="streamStatus"></div>
-    <div id="aspectToast"></div>
 
     <script>
         const video        = document.getElementById('video');
         const spinner      = document.getElementById('spinner');
         const channelInfo  = document.getElementById('channelInfo');
         const streamStatus = document.getElementById('streamStatus');
-        const aspectToast  = document.getElementById('aspectToast');
 
         let hlsPlayer = null, tsPlayer = null, hasInteracted = false;
         let currentCmd = '';
         let urlList = [], nameList = [], currentIndex = 0;
-        let infoTimer = null, statusTimer = null, zappingTimer = null, aspectTimer = null;
-
-        // Ekran formatları (Aspect Ratio)
-        const aspectModes = ['contain', 'cover', 'fill'];
-        const aspectNames = ['📺 Orijinal', '✂️ Tam Ekran', '↔️ Uzat'];
-        let aspectIdx = 0;
-
-        const HLS_CONFIG = {
-            startLevel: -1,
-            autoStartLoad: true,
-            startFragPrefetch: true,
-            maxBufferLength: 30,
-            maxMaxBufferLength: 60,
-            maxBufferSize: 60 * 1024 * 1024,
-            manifestLoadingTimeOut: 8000,
-            manifestLoadingMaxRetry: 3,
-            levelLoadingTimeOut: 8000,
-            fragLoadingTimeOut: 20000,
-            enableWorker: true,
-            lowLatencyMode: false,
-            backBufferLength: 30,
-            xhrSetup: function(xhr) { xhr.withCredentials = false; }
-        };
+        let infoTimer = null, statusTimer = null, zappingTimer = null;
 
         function showStatus(text, type, hideAfter) {
             if (statusTimer) clearTimeout(statusTimer);
@@ -119,67 +82,37 @@
             }, 3000);
         }
 
-        // Yeni: Ekran formatını değiştirme fonksiyonu
-        function toggleAspect() {
-            aspectIdx = (aspectIdx + 1) % aspectModes.length;
-            video.style.objectFit = aspectModes[aspectIdx];
-            
-            aspectToast.textContent = aspectNames[aspectIdx];
-            aspectToast.style.display = 'block';
-            aspectToast.style.opacity = '1';
-            if (aspectTimer) clearTimeout(aspectTimer);
-            aspectTimer = setTimeout(() => {
-                aspectToast.style.opacity = '0';
-                setTimeout(() => aspectToast.style.display = 'none', 500);
-            }, 2000);
-        }
-
         function forcePlay() {
             if (!hasInteracted) {
                 hasInteracted = true;
                 video.muted = false;
                 video.volume = 1.0;
                 video.play().catch(()=>{});
-                streamStatus.style.display = 'none'; // İlk ses uyarısını gizle
+                streamStatus.style.display = 'none';
             }
         }
         window.addEventListener('click', forcePlay);
 
-        // Yeni: Zapping Mantığı ve Tuş Kontrolleri
         window.addEventListener('keydown', function(e) {
             if (!hasInteracted) forcePlay();
+            if (urlList.length === 0) return;
 
-            // OK, Sol veya Sağ Tuşu ile Ekran Formatı Değiştir
-            if (e.keyCode === 13 || e.keyCode === 37 || e.keyCode === 39 || e.keyCode === 66) {
-                toggleAspect();
-                return;
-            }
-
-            // Aşağı/Yukarı ile Kanal Değiştirme
             if (e.keyCode === 40 || e.keyCode === 229) { // İleri
-                if (urlList.length === 0) return;
                 currentIndex = (currentIndex + 1) % urlList.length;
                 handleZapping();
             } else if (e.keyCode === 38 || e.keyCode === 228) { // Geri
-                if (urlList.length === 0) return;
                 currentIndex = (currentIndex - 1 + urlList.length) % urlList.length;
                 handleZapping();
             }
         });
 
-        // 200ms Gecikmeli Zapping
         function handleZapping() {
-            // Ekranda hemen yeni kanalın adını göster
             showChannelInfo(nameList[currentIndex] || '?', currentIndex);
             window.AppInventor.setWebViewString('INDEX:' + currentIndex);
-            
-            // Eğer daha önceki bir zapping işlemi bekliyorsa iptal et
             if (zappingTimer) clearTimeout(zappingTimer);
-            
-            // 200ms sonra yayını başlat
             zappingTimer = setTimeout(() => {
                 startStream(urlList[currentIndex]);
-            }, 200);
+            }, 200); // 200ms Zapping gecikmesi
         }
 
         function stopExistingPlayers() {
@@ -191,132 +124,62 @@
             video.src = "";
         }
 
-        function tryDirectPlay(url) {
-            video.src = url;
-            video.load();
-            
-            const onCanPlay = () => {
-                spinner.style.display = 'none';
-                cleanup();
-                handlePlayback();
-            };
-            const onError = () => {
-                spinner.style.display = 'none';
-                showStatus('❌ Yayın açılamadı', 'hata', 5000);
-                cleanup();
-            };
-            const onEnded = () => {
-                spinner.style.display = 'block';
-                setTimeout(() => { video.src = url; video.load(); video.play(); }, 1000);
-            };
-            function cleanup() {
-                video.removeEventListener('canplay', onCanPlay);
-                video.removeEventListener('error', onError);
-            }
-            video.addEventListener('canplay', onCanPlay);
-            video.addEventListener('error', onError);
-            video.addEventListener('ended', onEnded);
-            handlePlayback();
-        }
-
         function startStream(url) {
             if (!url) return;
             stopExistingPlayers();
-            spinner.style.display = 'block'; // Yükleniyor animasyonunu aç
+            spinner.style.display = 'block';
 
-            const lo       = url.toLowerCase();
-            const isTS     = lo.includes('.ts') || lo.includes('type=m3u_plus');
-            const isWorker = lo.includes('workers.dev');
+            const lo = url.toLowerCase();
+            // Erweitert für sup-4k.org Links und PHP-basierte TS Streams
+            const isTS = lo.includes('.ts') || lo.includes('extension=ts') || lo.includes('live.php');
 
             if (isTS && mpegts.getFeatureList().mseLivePlayback) {
                 tsPlayer = mpegts.createPlayer({
                     type: 'mse', isLive: true, url,
-                    config: {
-                        enableWorker: true,
-                        liveBufferLatencyChasing: true,
-                        liveBufferLatencyMinRemain: 0.5,
-                        liveBufferLatencyMaxLatency: 3.0
-                    }
+                    config: { enableWorker: true, liveBufferLatencyChasing: true }
                 });
                 tsPlayer.attachMediaElement(video);
                 tsPlayer.load();
-                
                 tsPlayer.on(mpegts.Events.MEDIA_INFO, () => {
                     spinner.style.display = 'none';
-                    handlePlayback();
+                    video.play();
                 });
                 tsPlayer.on(mpegts.Events.ERROR, () => {
                     spinner.style.display = 'none';
                     showStatus('❌ Yayın hatası', 'hata', 5000);
                 });
 
-            } else if (!isWorker && Hls.isSupported()) {
-                hlsPlayer = new Hls(HLS_CONFIG);
+            } else if (Hls.isSupported() && (lo.includes('.m3u8') || lo.includes('m3u'))) {
+                hlsPlayer = new Hls({ startLevel: -1, enableWorker: true });
                 hlsPlayer.loadSource(url);
                 hlsPlayer.attachMedia(video);
-
                 hlsPlayer.on(Hls.Events.MANIFEST_PARSED, () => {
                     spinner.style.display = 'none';
-                    handlePlayback();
+                    video.play();
                 });
-
-                hlsPlayer.on(Hls.Events.ERROR, function(e, data) {
-                    if (data.fatal) {
-                        hlsPlayer.destroy();
-                        hlsPlayer = null;
-                        tryDirectPlay(url);
-                    }
-                });
-
-                video.addEventListener('ended', function() {
-                    if (hlsPlayer) {
-                        spinner.style.display = 'block';
-                        setTimeout(() => {
-                            if (hlsPlayer) {
-                                hlsPlayer.stopLoad();
-                                hlsPlayer.startLoad();
-                            }
-                        }, 1000);
-                    }
-                });
-
             } else {
-                tryDirectPlay(url);
-            }
-        }
-
-        function handlePlayback() {
-            if (hasInteracted) {
-                video.muted = false; 
-                video.play().catch(()=>{});
-            } else {
-                video.play().catch(()=>{});
-                showStatus('🔊 Ses için OK tuşuna basın', 'bilgi', 6000);
+                // Standart HTML5 Video (MP4 vb.)
+                video.src = url;
+                video.load();
+                video.oncanplay = () => { spinner.style.display = 'none'; video.play(); };
+                video.onerror = () => { spinner.style.display = 'none'; showStatus('❌ Açılamadı', 'hata', 5000); };
             }
         }
 
         function handleCommand(cmd) {
-            if (!cmd) return;
-            if (cmd.startsWith('INDEX:')) return;
-
+            if (!cmd || cmd.startsWith('INDEX:')) return;
             if (cmd.startsWith('SETLIST:')) {
-                const rest  = cmd.slice(8);
-                const parts = rest.split('~~~');
-                const urls  = parts[0] ? parts[0].split('||') : [];
-                const names = parts[1] ? parts[1].split('||') : [];
-                const idx   = parts[2] ? parseInt(parts[2]) : 0;
-                if (urls[idx]) {
-                    startStream(urls[idx]);
-                    showChannelInfo(names[idx] || '?', idx);
-                }
-                setTimeout(() => {
-                    urlList = urls; nameList = names; currentIndex = idx;
-                }, 0);
-                return;
+                const parts = cmd.slice(8).split('~~~');
+                urlList = parts[0].split('||');
+                nameList = parts[1].split('||');
+                currentIndex = parseInt(parts[2]) || 0;
+                startStream(urlList[currentIndex]);
+                showChannelInfo(nameList[currentIndex], currentIndex);
+            } else if (cmd.startsWith('PLAY:')) {
+                startStream(cmd.slice(5));
+            } else if (cmd.includes('://')) {
+                startStream(cmd);
             }
-
-            if (cmd.startsWith('PLAY:')) { startStream(cmd.slice(5)); return; }
-            if (cmd.includes('://'))     { startStream(cmd); }
         }
 
         setInterval(() => {
