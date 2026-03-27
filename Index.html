@@ -14,6 +14,7 @@
         }
         video { position: absolute; width: 100%; height: 100%; object-fit: contain; z-index: 1; }
         
+        /* Moderner Lade-Kreis */
         #spinner {
             position: fixed; top: 50%; left: 50%; transform: translate(-50%,-50%);
             z-index: 300; width: 60px; height: 60px;
@@ -23,34 +24,42 @@
         }
         @keyframes spin { to { transform: translate(-50%,-50%) rotate(360deg); } }
 
+        #msg { 
+            position: relative; z-index: 100; color: white; 
+            font-family: sans-serif; font-size: 22px; font-weight: bold;
+            text-align: center; background: rgba(0,0,0,0.7); 
+            padding: 25px; border-radius: 15px; border: 2px solid rgba(255,255,255,0.2);
+            display: none;
+        }
         #channelInfo {
             position: fixed; bottom: 30px; left: 50%; transform: translateX(-50%);
-            z-index: 200; color: white; font-family: sans-serif; font-size: 22px;
-            font-weight: bold; background: rgba(0,0,0,0.85);
-            padding: 12px 28px; border-radius: 12px;
-            border: 2px solid rgba(255,255,255,0.2);
+            z-index: 200; color: white; font-family: sans-serif; font-size: 20px;
+            font-weight: bold; background: rgba(0,0,0,0.75);
+            padding: 10px 24px; border-radius: 10px;
+            border: 2px solid rgba(255,255,255,0.15);
             display: none; transition: opacity 0.5s;
         }
-
         #streamStatus {
-            position: fixed; top: 20px; left: 20px; z-index: 300;
+            position: fixed; top: 10px; left: 10px; z-index: 300;
             font-family: sans-serif; font-size: 14px; font-weight: bold;
             padding: 8px 14px; border-radius: 8px;
             display: none; transition: opacity 0.8s;
         }
-        #streamStatus.bilgi      { background: rgba(0,0,0,0.75); color: #fff; border: 1px solid #fff; }
+        #streamStatus.basarili   { background: rgba(0,80,0,0.8);  color: #00ff00; border: 1px solid #00ff00; }
         #streamStatus.hata       { background: rgba(80,0,0,0.8);  color: #ff4444; border: 1px solid #ff4444; }
     </style>
 </head>
 <body>
     <video id="video" playsinline autoplay muted></video>
     <div id="spinner"></div>
+    <div id="msg"></div>
     <div id="channelInfo"></div>
     <div id="streamStatus"></div>
 
     <script>
         const video        = document.getElementById('video');
         const spinner      = document.getElementById('spinner');
+        const msg          = document.getElementById('msg');
         const channelInfo  = document.getElementById('channelInfo');
         const streamStatus = document.getElementById('streamStatus');
 
@@ -83,13 +92,11 @@
         }
 
         function forcePlay() {
-            if (!hasInteracted) {
-                hasInteracted = true;
-                video.muted = false;
-                video.volume = 1.0;
-                video.play().catch(()=>{});
-                streamStatus.style.display = 'none';
-            }
+            hasInteracted = true;
+            video.muted = false;
+            video.volume = 1.0;
+            video.play().catch(()=>{});
+            msg.style.display = 'none';
         }
         window.addEventListener('click', forcePlay);
 
@@ -109,10 +116,11 @@
         function handleZapping() {
             showChannelInfo(nameList[currentIndex] || '?', currentIndex);
             window.AppInventor.setWebViewString('INDEX:' + currentIndex);
+            
             if (zappingTimer) clearTimeout(zappingTimer);
             zappingTimer = setTimeout(() => {
                 startStream(urlList[currentIndex]);
-            }, 200); // 200ms Zapping gecikmesi
+            }, 150); // 150ms Gecikme
         }
 
         function stopExistingPlayers() {
@@ -127,11 +135,10 @@
         function startStream(url) {
             if (!url) return;
             stopExistingPlayers();
-            spinner.style.display = 'block';
+            spinner.style.display = 'block'; // Kreis anzeigen
 
             const lo = url.toLowerCase();
-            // Erweitert für sup-4k.org Links und PHP-basierte TS Streams
-            const isTS = lo.includes('.ts') || lo.includes('extension=ts') || lo.includes('live.php');
+            const isTS = lo.includes('.ts') || lo.includes('extension=ts') || lo.includes('live.php') || lo.includes('type=m3u_plus');
 
             if (isTS && mpegts.getFeatureList().mseLivePlayback) {
                 tsPlayer = mpegts.createPlayer({
@@ -142,27 +149,40 @@
                 tsPlayer.load();
                 tsPlayer.on(mpegts.Events.MEDIA_INFO, () => {
                     spinner.style.display = 'none';
-                    video.play();
+                    handlePlayback();
                 });
                 tsPlayer.on(mpegts.Events.ERROR, () => {
                     spinner.style.display = 'none';
-                    showStatus('❌ Yayın hatası', 'hata', 5000);
+                    showStatus('❌ Yayın hatası', 'hata', 8000);
                 });
 
             } else if (Hls.isSupported() && (lo.includes('.m3u8') || lo.includes('m3u'))) {
-                hlsPlayer = new Hls({ startLevel: -1, enableWorker: true });
+                hlsPlayer = new Hls({ enableWorker: true, xhrSetup: (xhr)=>xhr.withCredentials=false });
                 hlsPlayer.loadSource(url);
                 hlsPlayer.attachMedia(video);
                 hlsPlayer.on(Hls.Events.MANIFEST_PARSED, () => {
                     spinner.style.display = 'none';
-                    video.play();
+                    handlePlayback();
+                });
+                hlsPlayer.on(Hls.Events.ERROR, (e, data) => {
+                    if (data.fatal) { spinner.style.display = 'none'; }
                 });
             } else {
-                // Standart HTML5 Video (MP4 vb.)
                 video.src = url;
                 video.load();
-                video.oncanplay = () => { spinner.style.display = 'none'; video.play(); };
-                video.onerror = () => { spinner.style.display = 'none'; showStatus('❌ Açılamadı', 'hata', 5000); };
+                video.oncanplay = () => { spinner.style.display = 'none'; handlePlayback(); };
+                video.onerror = () => { spinner.style.display = 'none'; showStatus('❌ Açılamadı', 'hata', 8000); };
+            }
+        }
+
+        function handlePlayback() {
+            if (hasInteracted) {
+                video.muted = false; video.play().catch(()=>{});
+                msg.style.display = 'none';
+            } else {
+                video.play().catch(()=>{});
+                msg.innerHTML = 'Ses için OK tuşuna bas';
+                msg.style.display = 'block';
             }
         }
 
@@ -170,11 +190,13 @@
             if (!cmd || cmd.startsWith('INDEX:')) return;
             if (cmd.startsWith('SETLIST:')) {
                 const parts = cmd.slice(8).split('~~~');
-                urlList = parts[0].split('||');
-                nameList = parts[1].split('||');
-                currentIndex = parseInt(parts[2]) || 0;
-                startStream(urlList[currentIndex]);
-                showChannelInfo(nameList[currentIndex], currentIndex);
+                urlList = parts[0] ? parts[0].split('||') : [];
+                nameList = parts[1] ? parts[1].split('||') : [];
+                currentIndex = parts[2] ? parseInt(parts[2]) : 0;
+                if (urlList[currentIndex]) {
+                    startStream(urlList[currentIndex]);
+                    showChannelInfo(nameList[currentIndex] || '?', currentIndex);
+                }
             } else if (cmd.startsWith('PLAY:')) {
                 startStream(cmd.slice(5));
             } else if (cmd.includes('://')) {
