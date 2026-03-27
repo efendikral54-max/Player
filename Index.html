@@ -12,48 +12,72 @@
             background-color: #000; overflow: hidden; 
             display: flex; justify-content: center; align-items: center;
         }
-        video { position: absolute; width: 100%; height: 100%; object-fit: contain; z-index: 1; }
-        #msg { 
-            position: relative; z-index: 100; color: white; 
-            font-family: sans-serif; font-size: 22px; font-weight: bold;
-            text-align: center; background: rgba(0,0,0,0.7); 
-            padding: 25px; border-radius: 15px; border: 2px solid rgba(255,255,255,0.2);
+        video { position: absolute; width: 100%; height: 100%; object-fit: contain; z-index: 1; transition: object-fit 0.3s; }
+        
+        /* Yeni: Modern Lade-Spinner */
+        #spinner {
+            position: fixed; top: 50%; left: 50%; transform: translate(-50%,-50%);
+            z-index: 300; width: 60px; height: 60px;
+            border: 5px solid rgba(255,255,255,0.2);
+            border-top: 5px solid #e50914; border-radius: 50%;
+            display: none; animation: spin 0.8s linear infinite;
         }
+        @keyframes spin { to { transform: translate(-50%,-50%) rotate(360deg); } }
+
+        /* Kanal Bilgisi */
         #channelInfo {
             position: fixed; bottom: 30px; left: 50%; transform: translateX(-50%);
-            z-index: 200; color: white; font-family: sans-serif; font-size: 20px;
-            font-weight: bold; background: rgba(0,0,0,0.75);
-            padding: 10px 24px; border-radius: 10px;
-            border: 2px solid rgba(255,255,255,0.15);
+            z-index: 200; color: white; font-family: sans-serif; font-size: 22px;
+            font-weight: bold; background: rgba(0,0,0,0.85);
+            padding: 12px 28px; border-radius: 12px;
+            border: 2px solid rgba(255,255,255,0.2);
             display: none; transition: opacity 0.5s;
         }
+
+        /* Yeni: Ekran Formatı Bilgisi */
+        #aspectToast {
+            position: fixed; top: 20px; right: 20px; z-index: 400;
+            background: rgba(0,0,0,0.85); color: white; padding: 10px 20px;
+            border-radius: 8px; font-family: sans-serif; font-size: 16px; font-weight: bold;
+            display: none; transition: opacity 0.5s; border: 1px solid #e50914;
+        }
+
+        /* Durum Mesajları */
         #streamStatus {
-            position: fixed; top: 10px; left: 10px; z-index: 300;
+            position: fixed; top: 20px; left: 20px; z-index: 300;
             font-family: sans-serif; font-size: 14px; font-weight: bold;
             padding: 8px 14px; border-radius: 8px;
             display: none; transition: opacity 0.8s;
         }
-        #streamStatus.yukleniyor { background: rgba(0,0,0,0.75); color: #ffcc00; border: 1px solid #ffcc00; }
+        #streamStatus.bilgi      { background: rgba(0,0,0,0.75); color: #fff; border: 1px solid #fff; }
         #streamStatus.basarili   { background: rgba(0,80,0,0.8);  color: #00ff00; border: 1px solid #00ff00; }
         #streamStatus.hata       { background: rgba(80,0,0,0.8);  color: #ff4444; border: 1px solid #ff4444; }
     </style>
 </head>
 <body>
     <video id="video" playsinline autoplay muted></video>
-    <div id="msg">Yükleniyor...</div>
+    
+    <div id="spinner"></div>
     <div id="channelInfo"></div>
     <div id="streamStatus"></div>
+    <div id="aspectToast"></div>
 
     <script>
         const video        = document.getElementById('video');
-        const msg          = document.getElementById('msg');
+        const spinner      = document.getElementById('spinner');
         const channelInfo  = document.getElementById('channelInfo');
         const streamStatus = document.getElementById('streamStatus');
+        const aspectToast  = document.getElementById('aspectToast');
 
         let hlsPlayer = null, tsPlayer = null, hasInteracted = false;
         let currentCmd = '';
         let urlList = [], nameList = [], currentIndex = 0;
-        let infoTimer = null, statusTimer = null;
+        let infoTimer = null, statusTimer = null, zappingTimer = null, aspectTimer = null;
+
+        // Ekran formatları (Aspect Ratio)
+        const aspectModes = ['contain', 'cover', 'fill'];
+        const aspectNames = ['📺 Orijinal', '✂️ Tam Ekran', '↔️ Uzat'];
+        let aspectIdx = 0;
 
         const HLS_CONFIG = {
             startLevel: -1,
@@ -66,7 +90,6 @@
             manifestLoadingMaxRetry: 3,
             levelLoadingTimeOut: 8000,
             fragLoadingTimeOut: 20000,
-            // Önemli: stream bitmesini engelle
             enableWorker: true,
             lowLatencyMode: false,
             backBufferLength: 30,
@@ -96,31 +119,68 @@
             }, 3000);
         }
 
+        // Yeni: Ekran formatını değiştirme fonksiyonu
+        function toggleAspect() {
+            aspectIdx = (aspectIdx + 1) % aspectModes.length;
+            video.style.objectFit = aspectModes[aspectIdx];
+            
+            aspectToast.textContent = aspectNames[aspectIdx];
+            aspectToast.style.display = 'block';
+            aspectToast.style.opacity = '1';
+            if (aspectTimer) clearTimeout(aspectTimer);
+            aspectTimer = setTimeout(() => {
+                aspectToast.style.opacity = '0';
+                setTimeout(() => aspectToast.style.display = 'none', 500);
+            }, 2000);
+        }
+
         function forcePlay() {
-            hasInteracted = true;
-            video.muted = false;
-            video.volume = 1.0;
-            video.play();
-            msg.style.display = 'none';
+            if (!hasInteracted) {
+                hasInteracted = true;
+                video.muted = false;
+                video.volume = 1.0;
+                video.play().catch(()=>{});
+                streamStatus.style.display = 'none'; // İlk ses uyarısını gizle
+            }
         }
         window.addEventListener('click', forcePlay);
 
+        // Yeni: Zapping Mantığı ve Tuş Kontrolleri
         window.addEventListener('keydown', function(e) {
             if (!hasInteracted) forcePlay();
-            if (e.keyCode === 40 || e.keyCode === 229) {
+
+            // OK, Sol veya Sağ Tuşu ile Ekran Formatı Değiştir
+            if (e.keyCode === 13 || e.keyCode === 37 || e.keyCode === 39 || e.keyCode === 66) {
+                toggleAspect();
+                return;
+            }
+
+            // Aşağı/Yukarı ile Kanal Değiştirme
+            if (e.keyCode === 40 || e.keyCode === 229) { // İleri
                 if (urlList.length === 0) return;
                 currentIndex = (currentIndex + 1) % urlList.length;
-                startStream(urlList[currentIndex]);
-                showChannelInfo(nameList[currentIndex] || '?', currentIndex);
-                window.AppInventor.setWebViewString('INDEX:' + currentIndex);
-            } else if (e.keyCode === 38 || e.keyCode === 228) {
+                handleZapping();
+            } else if (e.keyCode === 38 || e.keyCode === 228) { // Geri
                 if (urlList.length === 0) return;
                 currentIndex = (currentIndex - 1 + urlList.length) % urlList.length;
-                startStream(urlList[currentIndex]);
-                showChannelInfo(nameList[currentIndex] || '?', currentIndex);
-                window.AppInventor.setWebViewString('INDEX:' + currentIndex);
+                handleZapping();
             }
         });
+
+        // 200ms Gecikmeli Zapping
+        function handleZapping() {
+            // Ekranda hemen yeni kanalın adını göster
+            showChannelInfo(nameList[currentIndex] || '?', currentIndex);
+            window.AppInventor.setWebViewString('INDEX:' + currentIndex);
+            
+            // Eğer daha önceki bir zapping işlemi bekliyorsa iptal et
+            if (zappingTimer) clearTimeout(zappingTimer);
+            
+            // 200ms sonra yayını başlat
+            zappingTimer = setTimeout(() => {
+                startStream(urlList[currentIndex]);
+            }, 200);
+        }
 
         function stopExistingPlayers() {
             if (hlsPlayer) { hlsPlayer.destroy(); hlsPlayer = null; }
@@ -134,18 +194,19 @@
         function tryDirectPlay(url) {
             video.src = url;
             video.load();
+            
             const onCanPlay = () => {
-                showStatus('✅ Yayın başladı', 'basarili', 5000);
+                spinner.style.display = 'none';
                 cleanup();
                 handlePlayback();
             };
             const onError = () => {
-                showStatus('❌ Yayın açılamadı', 'hata', 8000);
+                spinner.style.display = 'none';
+                showStatus('❌ Yayın açılamadı', 'hata', 5000);
                 cleanup();
             };
             const onEnded = () => {
-                // Stream bitti — yeniden başlat!
-                showStatus('🔄 Yeniden bağlanıyor...', 'yukleniyor', 5000);
+                spinner.style.display = 'block';
                 setTimeout(() => { video.src = url; video.load(); video.play(); }, 1000);
             };
             function cleanup() {
@@ -161,7 +222,7 @@
         function startStream(url) {
             if (!url) return;
             stopExistingPlayers();
-            showStatus('⏳ Yayın yükleniyor...', 'yukleniyor', 30000);
+            spinner.style.display = 'block'; // Yükleniyor animasyonunu aç
 
             const lo       = url.toLowerCase();
             const isTS     = lo.includes('.ts') || lo.includes('type=m3u_plus');
@@ -179,17 +240,23 @@
                 });
                 tsPlayer.attachMediaElement(video);
                 tsPlayer.load();
-                showStatus('✅ Yayın başladı', 'basarili', 5000);
-                handlePlayback();
+                
+                tsPlayer.on(mpegts.Events.MEDIA_INFO, () => {
+                    spinner.style.display = 'none';
+                    handlePlayback();
+                });
+                tsPlayer.on(mpegts.Events.ERROR, () => {
+                    spinner.style.display = 'none';
+                    showStatus('❌ Yayın hatası', 'hata', 5000);
+                });
 
             } else if (!isWorker && Hls.isSupported()) {
-                // .gif dahil her URL önce HLS ile dene
                 hlsPlayer = new Hls(HLS_CONFIG);
                 hlsPlayer.loadSource(url);
                 hlsPlayer.attachMedia(video);
 
                 hlsPlayer.on(Hls.Events.MANIFEST_PARSED, () => {
-                    showStatus('✅ Yayın başladı', 'basarili', 5000);
+                    spinner.style.display = 'none';
                     handlePlayback();
                 });
 
@@ -197,15 +264,13 @@
                     if (data.fatal) {
                         hlsPlayer.destroy();
                         hlsPlayer = null;
-                        // HLS olmayan link — direkt dene
                         tryDirectPlay(url);
                     }
                 });
 
-                // Stream durduğunda yeniden bağlan
                 video.addEventListener('ended', function() {
                     if (hlsPlayer) {
-                        showStatus('🔄 Yeniden bağlanıyor...', 'yukleniyor', 5000);
+                        spinner.style.display = 'block';
                         setTimeout(() => {
                             if (hlsPlayer) {
                                 hlsPlayer.stopLoad();
@@ -222,12 +287,11 @@
 
         function handlePlayback() {
             if (hasInteracted) {
-                video.muted = false; video.play();
-                msg.style.display = 'none';
+                video.muted = false; 
+                video.play().catch(()=>{});
             } else {
-                video.play();
-                msg.innerHTML     = 'Ses için OK tuşuna bas';
-                msg.style.display = 'block';
+                video.play().catch(()=>{});
+                showStatus('🔊 Ses için OK tuşuna basın', 'bilgi', 6000);
             }
         }
 
