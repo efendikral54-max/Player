@@ -1,23 +1,25 @@
 <!DOCTYPE html>
-<html lang="de">
+<html lang="tr">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Ultimate Multi-Engine Player</title>
+    <title>Ultimate IPTV Player</title>
     <script src="https://cdn.jsdelivr.net/npm/hls.js@latest"></script>
     <script src="https://cdn.jsdelivr.net/npm/mpegts.js@latest/dist/mpegts.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/shaka-player/4.3.5/shaka-player.compiled.js"></script>
+    
     <style>
         body, html { margin: 0; padding: 0; width: 100%; height: 100%; background: #000; overflow: hidden; display: flex; justify-content: center; align-items: center; }
-        video { position: absolute; width: 100%; height: 100%; object-fit: contain; z-index: 1; background: #000; }
-        #spinner { position: fixed; top: 50%; left: 50%; transform: translate(-50%,-50%); z-index: 10; width: 50px; height: 50px; border: 5px solid #333; border-top: 5px solid #e50914; border-radius: 50%; animation: spin 1s linear infinite; display: none; }
+        video { position: absolute; width: 100%; height: 100%; object-fit: contain; z-index: 1; }
+        #spinner { position: fixed; top: 50%; left: 50%; transform: translate(-50%,-50%); z-index: 300; width: 60px; height: 60px; border: 5px solid rgba(255,255,255,0.2); border-top: 5px solid #e50914; border-radius: 50%; display: none; animation: spin 0.8s linear infinite; }
         @keyframes spin { to { transform: translate(-50%,-50%) rotate(360deg); } }
-        #msg { position: relative; z-index: 20; color: white; font-family: sans-serif; background: rgba(0,0,0,0.8); padding: 20px; border-radius: 10px; display: none; text-align: center; }
-        #info { position: fixed; bottom: 20px; left: 50%; transform: translateX(-50%); z-index: 30; color: white; font-family: sans-serif; background: rgba(0,0,0,0.6); padding: 8px 20px; border-radius: 20px; display: none; }
+        #msg { position: relative; z-index: 100; color: white; font-family: sans-serif; font-size: 20px; text-align: center; background: rgba(0,0,0,0.7); padding: 20px; border-radius: 10px; display: none; }
+        #info { position: fixed; bottom: 30px; left: 50%; transform: translateX(-50%); z-index: 200; color: white; font-family: sans-serif; background: rgba(0,0,0,0.8); padding: 10px 20px; border-radius: 8px; display: none; }
     </style>
 </head>
 <body>
 
-    <video id="video" playsinline autoplay title="IPTV Player"></video>
+    <video id="video" playsinline autoplay muted></video>
     <div id="spinner"></div>
     <div id="msg"></div>
     <div id="info"></div>
@@ -28,126 +30,130 @@
         const msg = document.getElementById('msg');
         const info = document.getElementById('info');
 
-        let hls = null;
-        let tsPlayer = null;
-        let currentUrl = '';
+        let hlsInst = null, tsInst = null, shakaInst = null;
         let urlList = [], nameList = [], currentIndex = 0;
         let isInteracted = false;
+        let currentUrl = "";
 
-        // --- ENGINE LOGIK ---
+        // Initialisiere Shaka
+        shaka.polyfils.installAll();
 
         function stopAll() {
-            if (hls) { hls.destroy(); hls = null; }
-            if (tsPlayer) { tsPlayer.unload(); tsPlayer.detachMediaElement(); tsPlayer.destroy(); tsPlayer = null; }
+            if (hlsInst) { hlsInst.destroy(); hlsInst = null; }
+            if (tsInst) { try { tsInst.unload(); tsInst.detachMediaElement(); tsInst.destroy(); } catch(e){} tsInst = null; }
+            if (shakaInst) { shakaInst.destroy(); shakaInst = null; }
             video.pause();
-            video.removeAttribute('src');
+            video.src = "";
             video.load();
         }
 
+        // --- DIE WASSERFALL-LOGIK ---
+        
         async function startStream(url) {
             if (!url) return;
             currentUrl = url.trim();
             stopAll();
             spinner.style.display = 'block';
-            console.log("Versuche Stream:", currentUrl);
+            console.log("Starte Versuchskette für:", currentUrl);
 
-            const lo = currentUrl.toLowerCase();
-
-            // 1. Check: Ist es ein direkter MP4/MKV Link?
-            if (lo.endsWith('.mp4') || lo.endsWith('.mkv')) {
-                tryNative(currentUrl, "MP4 Mode");
-                return;
-            }
-
-            // 2. Check: Ist es HLS (.m3u8 oder Tulix-Muster)?
-            if (lo.includes('.m3u8') || lo.includes('tracks-v') || lo.includes('mono.m3u8')) {
+            // Schritt 1: HLS.js (Standard für M3U8)
+            if (currentUrl.includes('.m3u8') || currentUrl.includes('tracks-v')) {
                 tryHls(currentUrl);
-                return;
-            }
-
-            // 3. Check: Ist es ein Xtream/Fiko Link (meist MPEG-TS)?
-            // Erkennt Muster wie :8080/username/password/12345
-            const xtreamPattern = /:\d+\/[^/]+\/[^/]+\/\d+$/;
-            if (xtreamPattern.test(currentUrl) || lo.includes('extension=ts')) {
+            } 
+            // Schritt 2: MPEG-TS (Für Xtream/Fiko4k ohne Endung)
+            else if (/:\d+\/.*?\/\d+$/.test(currentUrl) || currentUrl.includes('extension=ts')) {
                 tryTs(currentUrl);
-                return;
             }
-
-            // 4. Fallback: Wenn wir nicht wissen was es ist, probiere HLS, dann TS, dann Native
-            tryHls(currentUrl);
+            // Schritt 3: Alles andere -> Erst HLS versuchen
+            else {
+                tryHls(currentUrl);
+            }
         }
 
+        // ENGINE 1: HLS.js
         function tryHls(url) {
             if (Hls.isSupported()) {
-                hls = new Hls({ transitionInSync: true, maxBufferLength: 20 });
-                hls.loadSource(url);
-                hls.attachMedia(video);
-                hls.on(Hls.Events.MANIFEST_PARSED, () => playDetected("HLS Engine"));
-                hls.on(Hls.Events.ERROR, (event, data) => {
+                hlsInst = new Hls({ timeout: 5000, enableWorker: true });
+                hlsInst.loadSource(url);
+                hlsInst.attachMedia(video);
+                hlsInst.on(Hls.Events.MANIFEST_PARSED, () => success("HLS.js"));
+                hlsInst.on(Hls.Events.ERROR, (e, data) => {
                     if (data.fatal) {
-                        console.log("HLS Fatal Error, wechsle zu TS...");
-                        hls.destroy(); hls = null;
-                        tryTs(url);
+                        console.log("HLS.js fehlgeschlagen, probiere Shaka...");
+                        hlsInst.destroy(); hlsInst = null;
+                        tryShaka(url);
                     }
                 });
             } else {
-                tryNative(url, "Native iOS/Safari Mode");
+                tryShaka(url);
             }
         }
 
+        // ENGINE 2: Shaka Player (Google - sehr stark bei Fehlern)
+        async function tryShaka(url) {
+            shakaInst = new shaka.Player(video);
+            shakaInst.addEventListener('error', (e) => {
+                console.log("Shaka fehlgeschlagen, probiere MPEG-TS...");
+                shakaInst.destroy(); shakaInst = null;
+                tryTs(url);
+            });
+            try {
+                await shakaInst.load(url);
+                success("Shaka");
+            } catch (e) {
+                tryTs(url);
+            }
+        }
+
+        // ENGINE 3: MPEG-TS (Für Fiko4k Direkt-Links)
         function tryTs(url) {
             if (mpegts.getFeatureList().mseLivePlayback) {
-                tsPlayer = mpegts.createPlayer({ type: 'mse', isLive: true, url: url });
-                tsPlayer.attachMediaElement(video);
-                tsPlayer.load();
-                tsPlayer.play().then(() => playDetected("MPEG-TS Engine")).catch(() => {
-                    console.log("TS Error, wechsle zu Native...");
-                    tryNative(url, "Native Fallback");
-                });
+                tsInst = mpegts.createPlayer({ type: 'mse', isLive: true, url: url });
+                tsInst.attachMediaElement(video);
+                tsInst.load();
+                tsInst.play().then(() => success("MPEG-TS")).catch(() => tryNative(url));
             } else {
-                tryNative(url, "Native Fallback");
+                tryNative(url);
             }
         }
 
-        function tryNative(url, modeName) {
-            console.log("Nutze:", modeName);
+        // ENGINE 4: NATIVE (Der "Alles-Fresser" - hilft bei Tulix/CORS)
+        function tryNative(url) {
+            console.log("Nutze Native Fallback...");
             video.src = url;
             video.load();
             video.play()
-                .then(() => playDetected(modeName))
-                .catch(e => {
+                .then(() => success("Native"))
+                .catch(() => {
                     spinner.style.display = 'none';
-                    console.error("Native Playback failed too.");
+                    console.error("Alle Player gescheitert.");
                 });
         }
 
-        function playDetected(engine) {
+        function success(engine) {
             spinner.style.display = 'none';
-            console.log("Erfolg mit:", engine);
-            if (!isInteracted) {
-                msg.innerHTML = "Ton aktivieren (OK drücken)";
-                msg.style.display = "block";
+            console.log("Erfolg mit Engine:", engine);
+            if (isInteracted) {
+                video.muted = false;
+                video.play().catch(()=>{});
+                msg.style.display = 'none';
+            } else {
+                msg.innerHTML = "Ton aktivieren: OK drücken";
+                msg.style.display = 'block';
             }
         }
 
-        // --- INTERAKTION & ZAPPING ---
+        // --- STEUERUNG & KODULAR ---
 
         window.addEventListener('click', () => {
             isInteracted = true;
             video.muted = false;
-            video.play();
+            video.play().catch(()=>{});
             msg.style.display = 'none';
         });
 
-        function showInfo(text) {
-            info.textContent = text;
-            info.style.display = 'block';
-            setTimeout(() => info.style.display = 'none', 3000);
-        }
-
         window.addEventListener('keydown', (e) => {
             if (urlList.length === 0) return;
-            // Hoch/Runter Tasten (Standard für Fernbedienungen)
             if (e.keyCode === 38 || e.keyCode === 228) { // Up
                 currentIndex = (currentIndex - 1 + urlList.length) % urlList.length;
                 zap();
@@ -158,33 +164,31 @@
         });
 
         function zap() {
-            showInfo((currentIndex + 1) + ". " + nameList[currentIndex]);
+            info.textContent = (currentIndex + 1) + ". " + nameList[currentIndex];
+            info.style.display = 'block';
+            setTimeout(() => info.style.display = 'none', 3000);
             startStream(urlList[currentIndex]);
             window.AppInventor.setWebViewString("INDEX:" + currentIndex);
         }
 
-        // --- KOMMUNIKATION MIT KODULAR ---
-
         setInterval(() => {
             try {
-                let cmd = window.AppInventor.getWebViewString();
-                if (cmd && cmd !== "JS_READY") {
+                const cmd = window.AppInventor.getWebViewString();
+                if (cmd && cmd !== "READY") {
                     if (cmd.startsWith("SETLIST:")) {
-                        let parts = cmd.slice(8).split("~~~");
+                        const parts = cmd.slice(8).split("~~~");
                         urlList = parts[0].split("||");
                         nameList = parts[1].split("||");
                         currentIndex = parseInt(parts[2]) || 0;
                         startStream(urlList[currentIndex]);
-                        window.AppInventor.setWebViewString("JS_READY"); // Reset
+                        window.AppInventor.setWebViewString("READY");
                     } else if (cmd.startsWith("PLAY:")) {
                         startStream(cmd.slice(5));
-                        window.AppInventor.setWebViewString("JS_READY");
+                        window.AppInventor.setWebViewString("READY");
                     }
                 }
             } catch(e) {}
         }, 400);
-
-        window.AppInventor.setWebViewString("JS_READY");
 
     </script>
 </body>
