@@ -61,26 +61,13 @@
         const channelInfo  = document.getElementById('channelInfo');
         const streamStatus = document.getElementById('streamStatus');
 
-        let hlsPlayer = null, tsPlayer = null, hasInteracted = false;
+        // Geänderte Variablen für den neuen Player-Code
+        let hls = null; 
+        let tsPlayer = null; 
+        let hasInteracted = false;
         let currentCmd = '';
         let urlList = [], nameList = [], currentIndex = 0;
         let infoTimer = null, statusTimer = null, zappingTimer = null;
-
-        // VERBESSERTE HLS CONFIG: Gibt lahmen Servern mehr Zeit, aber lädt schneller los
-        const HLS_CONFIG = {
-            startLevel: -1,
-            autoStartLoad: true,
-            startFragPrefetch: true,
-            maxBufferLength: 30,
-            maxMaxBufferLength: 60,
-            manifestLoadingTimeOut: 15000, // Von 8s auf 15s erhöht für .txt/.gif links
-            manifestLoadingMaxRetry: 2,    // Weniger Retries, um schneller auf Fallback zu wechseln
-            levelLoadingTimeOut: 10000,
-            fragLoadingTimeOut: 20000,
-            enableWorker: true,
-            lowLatencyMode: true,          // Zwingt HLS schneller zu starten
-            xhrSetup: function(xhr) { xhr.withCredentials = false; }
-        };
 
         function showStatus(text, type, hideAfter) {
             if (statusTimer) clearTimeout(statusTimer);
@@ -136,41 +123,7 @@
             }, 100);
         }
 
-        function stopExistingPlayers() {
-            if (hlsPlayer) { hlsPlayer.destroy(); hlsPlayer = null; }
-            if (tsPlayer)  {
-                tsPlayer.unload(); tsPlayer.detachMediaElement();
-                tsPlayer.destroy(); tsPlayer = null;
-            }
-            video.src = "";
-            video.load();
-        }
-
-        function tryDirectPlay(url) {
-            video.src = url;
-            video.load();
-            const onCanPlay = () => {
-                spinner.style.display = 'none';
-                showStatus('✅ Yayın başladı', 'basarili', 5000);
-                cleanup();
-                handlePlayback();
-            };
-            const onError = () => {
-                spinner.style.display = 'none';
-                showStatus('❌ Yayın açılamadı', 'hata', 8000);
-                cleanup();
-            };
-            function cleanup() {
-                video.removeEventListener('canplay', onCanPlay);
-                video.removeEventListener('error', onError);
-            }
-            video.addEventListener('canplay', onCanPlay);
-            video.addEventListener('error', onError);
-            handlePlayback();
-        }
-
-       let hls = null;
-        let tsPlayer = null;
+        // --- DEIN NEUER SUPER-PLAYER CODE START ---
 
         function startStream(url) {
             const video = document.querySelector('video');
@@ -178,6 +131,7 @@
             const msg = document.getElementById('msg');
             
             if (spinner) spinner.style.display = 'block';
+            showStatus('⏳ Yayın yükleniyor...', 'yukleniyor', 15000);
 
             // 1. Alte Player sauber beenden
             if (hls) { hls.destroy(); hls = null; }
@@ -200,7 +154,8 @@
                     
                     hls.on(Hls.Events.MANIFEST_PARSED, function() {
                         if (spinner) spinner.style.display = 'none';
-                        video.play().catch(()=>{});
+                        showStatus('✅ Yayın başladı (HLS)', 'basarili', 5000);
+                        handlePlayback();
                     });
 
                     // Fehlerbehandlung für Tulix und Proxy-Streams
@@ -208,13 +163,11 @@
                         if (data.fatal) {
                             switch (data.type) {
                                 case Hls.ErrorTypes.NETWORK_ERROR:
-                                    // Meistens CORS-Fehler (wie bei Tulix TV!) -> Fallback auf nativen Player
                                     console.log("CORS oder Netzwerkfehler, nutze nativen Fallback");
                                     hls.destroy();
                                     spielNativ(url);
                                     break;
                                 case Hls.ErrorTypes.MEDIA_ERROR:
-                                    // Proxy-Fehler (wie bei Bstelevision!) -> Versuch der Selbstheilung
                                     console.log("Stream hakt, versuche Reparatur...");
                                     hls.recoverMediaError();
                                     break;
@@ -226,15 +179,14 @@
                         }
                     });
                 } else {
-                    // Für sehr alte Geräte
                     spielNativ(url);
                 }
             } 
-            // 3. Ist es ein MPEG-TS Stream (oder hat gar keine Endung wie Fiko4k)
+            // 3. Ist es ein MPEG-TS Stream (oder hat gar keine Endung)
             else {
                 if (mpegts.getFeatureList().mseLivePlayback) {
                     tsPlayer = mpegts.createPlayer({
-                        type: 'ts', // ZWINGT den Player, es als TS zu verarbeiten (Löst das Fiko4k Problem!)
+                        type: 'ts', // ZWINGT den Player, es als TS zu verarbeiten
                         isLive: true,
                         url: url
                     }, {
@@ -245,8 +197,9 @@
                     tsPlayer.load();
                     tsPlayer.play().then(() => {
                         if (spinner) spinner.style.display = 'none';
+                        showStatus('✅ Yayın başladı (TS)', 'basarili', 5000);
+                        handlePlayback();
                     }).catch((e) => {
-                        // Wenn mpegts scheitert, sofort nativer Fallback
                         spielNativ(url);
                     });
 
@@ -260,8 +213,6 @@
             }
         }
 
-        // 4. Der "Rettungs-Anker" (Nativer HTML5 Player)
-        // Ignoriert CORS-Fehler und springt ein, wenn JavaScript blockiert wird.
         function spielNativ(url) {
             const video = document.querySelector('video');
             const spinner = document.getElementById('spinner');
@@ -269,49 +220,3 @@
             video.src = url;
             video.play().then(() => {
                 if (spinner) spinner.style.display = 'none';
-            }).catch((e) => {
-                console.log("Stream konnte auch nativ nicht gestartet werden.", e);
-            });
-        }
-
-        function handlePlayback() {
-            if (hasInteracted) {
-                video.muted = false; video.play().catch(()=>{});
-                msg.style.display = 'none';
-            } else {
-                video.play().catch(()=>{});
-                msg.innerHTML     = 'Ses için OK tuşuna bas';
-                msg.style.display = 'block';
-            }
-        }
-
-        function handleCommand(cmd) {
-            if (!cmd || cmd.startsWith('INDEX:')) return;
-            if (cmd.startsWith('SETLIST:')) {
-                const parts = cmd.slice(8).split('~~~');
-                urlList = parts[0] ? parts[0].split('||') : [];
-                nameList = parts[1] ? parts[1].split('||') : [];
-                currentIndex = parts[2] ? parseInt(parts[2]) : 0;
-                if (urlList[currentIndex]) {
-                    startStream(urlList[currentIndex]);
-                    showChannelInfo(nameList[currentIndex] || '?', currentIndex);
-                }
-            } else if (cmd.startsWith('PLAY:')) {
-                startStream(cmd.slice(5));
-            } else if (cmd.includes('://')) {
-                startStream(cmd);
-            }
-        }
-
-        setInterval(() => {
-            try {
-                const cmd = window.AppInventor.getWebViewString();
-                if (cmd && cmd !== currentCmd) {
-                    currentCmd = cmd;
-                    handleCommand(cmd);
-                }
-            } catch(e) {}
-        }, 300);
-    </script>
-</body>
-</html>
