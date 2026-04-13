@@ -1,581 +1,290 @@
 <!DOCTYPE html>
 <html lang="tr">
 <head>
-<meta charset="UTF-8">
-<title>IPTV Player Ultimate</title>
-<script src="https://cdn.jsdelivr.net/npm/hls.js@latest"></script>
-<script src="https://cdn.jsdelivr.net/npm/mpegts.js@latest/dist/mpegts.min.js"></script>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/shaka-player/4.3.5/shaka-player.compiled.js"></script>
-<style>
-* { margin:0; padding:0; box-sizing:border-box; }
-body, html { width:100%; height:100%; background:#000; overflow:hidden; font-family:'Segoe UI',sans-serif; }
-#video { position:absolute; inset:0; width:100%; height:100%; object-fit:contain; z-index:1; }
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Canli TV Player Ultimate</title>
+    <script src="https://cdn.jsdelivr.net/npm/hls.js@latest"></script>
+    <script src="https://cdn.jsdelivr.net/npm/mpegts.js@latest/dist/mpegts.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/shaka-player/4.3.5/shaka-player.compiled.js"></script>
 
-#loader {
-    position:fixed; inset:0; z-index:50;
-    display:flex; flex-direction:column; align-items:center; justify-content:center;
-    background:rgba(0,0,0,0.85); transition:opacity 0.4s;
-}
-#loader.hidden { opacity:0; pointer-events:none; }
-.spinner {
-    width:48px; height:48px;
-    border:4px solid rgba(255,255,255,0.1); border-top-color:#e50914;
-    border-radius:50%; animation:spin 0.8s linear infinite; margin-bottom:14px;
-}
-@keyframes spin { to { transform:rotate(360deg); } }
-#loaderText { color:#fff; font-size:17px; font-weight:600; }
-#loaderSub  { color:#888; font-size:12px; margin-top:6px; max-width:380px; text-align:center; }
+    <style>
+        body, html { 
+            margin: 0; padding: 0; width: 100%; height: 100%; 
+            background-color: #000; overflow: hidden; 
+            display: flex; justify-content: center; align-items: center;
+        }
+        video { position: absolute; width: 100%; height: 100%; object-fit: contain; z-index: 1; }
+        
+        #spinner {
+            position: fixed; top: 50%; left: 50%; transform: translate(-50%,-50%);
+            z-index: 300; width: 60px; height: 60px;
+            border: 5px solid rgba(255,255,255,0.2);
+            border-top: 5px solid #e50914; border-radius: 50%;
+            display: none; animation: spin 0.8s linear infinite;
+        }
+        @keyframes spin { to { transform: translate(-50%,-50%) rotate(360deg); } }
 
-#muteScreen {
-    position:fixed; inset:0; z-index:200;
-    background:rgba(0,0,0,0.88);
-    display:flex; flex-direction:column; align-items:center; justify-content:center; gap:20px;
-}
-#muteScreen.hidden { display:none; }
-#muteScreen .mIcon  { font-size:52px; }
-#muteScreen .mTitle { color:#fff; font-size:22px; font-weight:700; text-align:center; }
-#muteScreen .mSub   { color:rgba(255,255,255,0.55); font-size:14px; text-align:center; }
-#muteBtn {
-    margin-top:12px; background:rgba(229,9,20,0.15);
-    border:3px solid #e50914; border-radius:14px;
-    color:#fff; font-size:18px; font-weight:700;
-    padding:18px 48px; cursor:pointer; outline:none; transition:all 0.15s;
-}
-#muteBtn.focused { background:#e50914; transform:scale(1.05); }
-
-#zapOverlay {
-    position:fixed; bottom:40px; left:50%; transform:translateX(-50%);
-    z-index:60; background:rgba(0,0,0,0.88);
-    border:1px solid rgba(229,9,20,0.5); border-radius:18px;
-    padding:14px 32px; min-width:380px; max-width:600px;
-    text-align:center; opacity:0; transition:opacity 0.3s; pointer-events:none;
-}
-#zapOverlay.show { opacity:1; }
-#zapPrev { color:#555; font-size:13px; margin-bottom:6px; }
-#zapCurr {
-    color:#fff; font-size:21px; font-weight:700; padding:8px 0; margin:4px 0;
-    border-top:1px solid rgba(255,255,255,0.1); border-bottom:1px solid rgba(255,255,255,0.1);
-}
-#zapNum { color:#e50914; margin-right:6px; }
-#zapNext { color:#555; font-size:13px; margin-top:6px; }
-
-#dimmer { position:fixed; inset:0; z-index:100; background:rgba(0,0,0,0.72); display:none; }
-#dimmer.show { display:block; }
-
-#mainMenu {
-    position:fixed; top:50%; right:36px; z-index:110;
-    transform:translateY(-50%);
-    background:rgba(14,14,14,0.97);
-    border:1px solid rgba(255,255,255,0.1);
-    border-radius:18px; padding:20px 16px;
-    display:none; flex-direction:column; gap:8px; min-width:290px;
-}
-#mainMenu.show { display:flex; }
-#mainMenu h3 {
-    color:#fff; font-size:14px; font-weight:700;
-    padding-bottom:10px; margin-bottom:2px;
-    border-bottom:1px solid rgba(255,255,255,0.1);
-}
-.mBtn {
-    background:rgba(255,255,255,0.06); border:2px solid transparent;
-    border-radius:10px; color:#ccc; font-size:14px; font-weight:600;
-    padding:13px 16px; text-align:left; cursor:pointer; outline:none;
-    display:flex; align-items:center; gap:12px; transition:all 0.12s;
-}
-.mBtn .ic { font-size:18px; width:24px; text-align:center; }
-.mBtn.focused { border-color:#e50914; background:rgba(229,9,20,0.15); color:#fff; }
-.mBtn.red { color:#ff7070; }
-.mBtn.red.focused { border-color:#ff4444; background:rgba(255,68,68,0.15); color:#ffaaaa; }
-.divider { height:1px; background:rgba(255,255,255,0.08); margin:4px 0; }
-
-#listOverlay {
-    position:fixed; inset:0; z-index:120;
-    display:none; align-items:center; justify-content:center;
-    background:rgba(0,0,0,0.75);
-}
-#listOverlay.show { display:flex; }
-#listPanel {
-    background:rgba(12,12,12,0.98); border:1px solid rgba(255,255,255,0.12);
-    border-radius:20px; width:560px; max-width:92vw;
-    padding:22px 0 14px; display:flex; flex-direction:column;
-}
-#listTitle {
-    color:#fff; font-size:15px; font-weight:700;
-    padding:0 22px 14px; border-bottom:1px solid rgba(255,255,255,0.08); margin-bottom:6px;
-}
-.lItem {
-    padding:12px 22px; color:#999; font-size:13px; font-weight:500;
-    cursor:pointer; transition:all 0.1s;
-    white-space:nowrap; overflow:hidden; text-overflow:ellipsis;
-    border-left:3px solid transparent;
-}
-.lItem.focused { background:rgba(229,9,20,0.18); color:#fff; border-left-color:#e50914; padding-left:19px; }
-.lItem.current { color:#e5a010; }
-.lItem.focused.current { background:rgba(229,160,16,0.18); border-left-color:#e5a010; }
-#listHint { color:#444; font-size:11px; text-align:center; padding:10px 0 0; }
-</style>
+        #msg { 
+            position: relative; z-index: 100; color: white; 
+            font-family: sans-serif; font-size: 22px; font-weight: bold;
+            text-align: center; background: rgba(0,0,0,0.7); 
+            padding: 25px; border-radius: 15px; border: 2px solid rgba(255,255,255,0.2);
+        }
+        #channelInfo {
+            position: fixed; bottom: 30px; left: 50%; transform: translateX(-50%);
+            z-index: 200; color: white; font-family: sans-serif; font-size: 20px;
+            font-weight: bold; background: rgba(0,0,0,0.75);
+            padding: 10px 24px; border-radius: 10px;
+            border: 2px solid rgba(255,255,255,0.15);
+            display: none; transition: opacity 0.5s;
+        }
+        #streamStatus {
+            position: fixed; top: 10px; left: 10px; z-index: 300;
+            font-family: sans-serif; font-size: 14px; font-weight: bold;
+            padding: 8px 14px; border-radius: 8px;
+            display: none; transition: opacity 0.8s;
+        }
+        #streamStatus.yukleniyor { background: rgba(0,0,0,0.75); color: #ffcc00; border: 1px solid #ffcc00; }
+        #streamStatus.basarili   { background: rgba(0,80,0,0.8);  color: #00ff00; border: 1px solid #00ff00; }
+        #streamStatus.hata       { background: rgba(80,0,0,0.8);  color: #ff4444; border: 1px solid #ff4444; }
+    </style>
 </head>
 <body>
+    <video id="video" playsinline autoplay muted></video>
+    <div id="spinner"></div> 
+    <div id="msg" style="display:none;"></div>
+    <div id="channelInfo"></div>
+    <div id="streamStatus"></div>
 
-<video id="video" playsinline autoplay muted></video>
+    <script>
+        // Initialize Shaka polyfills immediately
+        shaka.polyfill.installAll();
 
-<div id="loader">
-    <div class="spinner"></div>
-    <div id="loaderText">Yükleniyor...</div>
-    <div id="loaderSub"></div>
-</div>
+        const video        = document.getElementById('video');
+        const spinner      = document.getElementById('spinner');
+        const msg          = document.getElementById('msg');
+        const channelInfo  = document.getElementById('channelInfo');
+        const streamStatus = document.getElementById('streamStatus');
 
-<div id="muteScreen">
-    <div class="mIcon">🔇</div>
-    <div class="mTitle">Ses kapalı</div>
-    <div class="mSub">Yayın arka planda başlatılıyor.<br>Devam etmek için sesi açın.</div>
-    <button id="muteBtn" class="focused" onclick="doUnmute()">▶  Sesi Aç ve Başlat</button>
-</div>
+        let hlsPlayer = null, tsPlayer = null, shakaPlayer = null;
+        let hasInteracted = false, currentCmd = '';
+        let urlList = [], nameList = [], currentIndex = 0;
+        let infoTimer = null, statusTimer = null, zappingTimer = null;
+        let retryCount = 0, currentUrl = '';
 
-<div id="zapOverlay">
-    <div id="zapPrev"></div>
-    <div id="zapCurr"><span id="zapNum"></span><span id="zapName"></span></div>
-    <div id="zapNext"></div>
-</div>
-
-<div id="dimmer"></div>
-
-<div id="mainMenu">
-    <h3>📺 Menü</h3>
-    <button class="mBtn" data-act="channels"><span class="ic">📋</span>Kanal Seç</button>
-    <button class="mBtn" data-act="categories"><span class="ic">🗂️</span>Kategori Seç</button>
-    <div class="divider"></div>
-    <button class="mBtn" data-act="altplayer"><span class="ic">▶️</span>Harici Player</button>
-    <button class="mBtn red" data-act="goback"><span class="ic">⬅️</span>Kanallar'a Dön</button>
-    <div class="divider"></div>
-    <button class="mBtn" data-act="closemenu"><span class="ic">✖️</span>Kapat</button>
-</div>
-
-<div id="listOverlay">
-    <div id="listPanel">
-        <div id="listTitle">
-            <span id="listIcon"></span><span id="listTitleText"></span>
-        </div>
-        <div id="listItems"></div>
-        <div id="listHint">▲ ▼ gezin  •  OK seç  •  Geri kapat</div>
-    </div>
-</div>
-
-<script>
-// Shaka Init
-shaka.polyfill.installAll();
-
-const video       = document.getElementById('video');
-const loader      = document.getElementById('loader');
-const loaderText  = document.getElementById('loaderText');
-const loaderSub   = document.getElementById('loaderSub');
-const muteScreen  = document.getElementById('muteScreen');
-const zapOverlay  = document.getElementById('zapOverlay');
-const dimmer      = document.getElementById('dimmer');
-const mainMenu    = document.getElementById('mainMenu');
-const listOverlay = document.getElementById('listOverlay');
-const listItemsEl = document.getElementById('listItems');
-
-let mode = 'mute', menuFocusIdx = 0, listFocusIdx = 0;
-let urlList = [], nameList = [], currentIndex = 0, currentUrl = '';
-let categoryList = [];
-let xtHost = '', xtUser = '', xtPass = '', isXtreamMode = false;
-let hlsPlayer = null, tsPlayer = null, shakaPlayer = null;
-let retryCount = 0, retryTimer = null, zapTimer = null;
-let hasUnmuted = false;
-let currentCmd = '';
-
-function toApp(s) { try { window.AppInventor.setWebViewString(s); } catch(e) {} }
-
-// ── Loader & Zap & UI ──────────────────────────────────────
-function showLoader(t, s) {
-    if (mode === 'mute') return;
-    loaderText.textContent = t || 'Yükleniyor...';
-    loaderSub.textContent  = s || '';
-    loader.classList.remove('hidden');
-}
-function hideLoader() { loader.classList.add('hidden'); }
-function hideZap() {
-    zapOverlay.classList.remove('show');
-    if (zapTimer) { clearTimeout(zapTimer); zapTimer = null; }
-}
-function updateZap() {
-    if (!nameList.length || !hasUnmuted) return;
-    const t = nameList.length;
-    document.getElementById('zapNum').textContent  = (currentIndex + 1) + '. ';
-    document.getElementById('zapName').textContent = nameList[currentIndex] || '';
-    document.getElementById('zapPrev').textContent = '▲  ' + (nameList[(currentIndex-1+t)%t] || '');
-    document.getElementById('zapNext').textContent = '▼  ' + (nameList[(currentIndex+1)%t]   || '');
-    zapOverlay.classList.add('show');
-    if (zapTimer) clearTimeout(zapTimer);
-    zapTimer = setTimeout(() => zapOverlay.classList.remove('show'), 4000);
-}
-function doUnmute() {
-    hasUnmuted = true;
-    video.muted = false; video.volume = 1.0;
-    muteScreen.classList.add('hidden');
-    mode = 'video';
-    if (currentUrl) { retryCount = 0; startStream(currentUrl); }
-}
-
-// ── PLAYER MASCHINE (ULTIMATE FALLBACK) ───────────────────
-function stopAll() {
-    if (retryTimer) { clearTimeout(retryTimer); retryTimer = null; }
-    if (hlsPlayer) { try { hlsPlayer.destroy(); } catch(e) {} hlsPlayer = null; }
-    if (tsPlayer)  { try { tsPlayer.unload(); tsPlayer.detachMediaElement(); tsPlayer.destroy(); } catch(e) {} tsPlayer = null; }
-    if (shakaPlayer) { try { shakaPlayer.destroy(); } catch(e) {} shakaPlayer = null; }
-    video.src = ''; video.removeAttribute('src'); video.load();
-}
-
-function onSuccess() {
-    hideLoader(); retryCount = 0;
-    video.muted = !hasUnmuted; video.volume = hasUnmuted ? 1.0 : 0.0;
-}
-
-function onError(reason) {
-    retryCount++;
-    if (retryCount <= 2) { // Nur 2 Retries, um schneller durchzuwechseln
-        showLoader('Yeniden bağlanıyor... (' + retryCount + '/2)', reason || '');
-        retryTimer = setTimeout(() => startStream(currentUrl), 3000);
-    } else { 
-        hideLoader(); retryCount = 0; 
-        loaderText.textContent = "Yayın açılamadı";
-        loaderSub.textContent = "Bağlantı engellendi veya format desteklenmiyor.";
-        loader.classList.remove('hidden');
-    }
-}
-
-// Der smarte Router
-function startStream(url) {
-    if (!url) return;
-    currentUrl = url; stopAll();
-    if (mode !== 'mute') showLoader('Bağlanıyor...', '');
-
-    const lo = url.toLowerCase();
-    
-    // Die Problem-Erkenner:
-    const isTulix = lo.includes('tulix');
-    const isFiko = lo.includes('fiko4k');
-    const isTS = /:\d{4,5}\/[^/]+\/[^/]+\/\d+$/.test(url) || lo.includes('type=m3u_plus') || lo.endsWith('.ts');
-    const isHLS = lo.includes('.m3u8');
-
-    // 1. TULIX: Blockiert JS via CORS extrem hart -> Sofort Native erzwingen!
-    if (isTulix) {
-        tryNative(url, false);
-        return;
-    }
-    
-    // 2. FIKO4K: Oft krumme TS-Dateien -> Native als Erstes, TS Player als Backup
-    if (isFiko) {
-        tryNative(url, 'ts');
-        return;
-    }
-
-    // 3. Normaler Ablauf für den Rest
-    if (isHLS) {
-        tryHLS(url);
-    } else if (isTS) {
-        tryTS(url);
-    } else {
-        tryShaka(url); // Wenn wir es nicht kennen -> Shaka -> Native
-    }
-}
-
-// ENGINE A: HLS.js
-function tryHLS(url) {
-    if (typeof Hls === 'undefined' || !Hls.isSupported()) return tryShaka(url);
-    hlsPlayer = new Hls({ maxBufferLength: 30, enableWorker: true });
-    hlsPlayer.loadSource(url);
-    hlsPlayer.attachMedia(video);
-    hlsPlayer.on(Hls.Events.MANIFEST_PARSED, () => video.play().then(onSuccess).catch(onSuccess));
-    hlsPlayer.on(Hls.Events.ERROR, (e, d) => {
-        if (d.fatal) {
-            hlsPlayer.destroy(); hlsPlayer = null;
-            tryShaka(url); // RETTUNG 1: Shaka
+        function showStatus(text, type, hideAfter) {
+            if (statusTimer) clearTimeout(statusTimer);
+            streamStatus.textContent   = text;
+            streamStatus.className     = type;
+            streamStatus.style.display = 'block';
+            streamStatus.style.opacity = '1';
+            statusTimer = setTimeout(() => {
+                streamStatus.style.opacity = '0';
+                setTimeout(() => { streamStatus.style.display = 'none'; }, 800);
+            }, hideAfter || 5000);
         }
-    });
-}
 
-// ENGINE B: Shaka Player (Google's Panzer)
-function tryShaka(url) {
-    if (typeof shaka === 'undefined' || !shaka.Player.isBrowserSupported()) return tryNative(url, false);
-    shakaPlayer = new shaka.Player(video);
-    shakaPlayer.load(url).then(() => video.play().then(onSuccess).catch(onSuccess)).catch(e => {
-        shakaPlayer.destroy(); shakaPlayer = null;
-        tryNative(url, false); // RETTUNG 2: Native
-    });
-}
-
-// ENGINE C: MPEG-TS
-function tryTS(url) {
-    if (typeof mpegts === 'undefined' || !mpegts.getFeatureList().mseLivePlayback) return tryNative(url, false);
-    tsPlayer = mpegts.createPlayer({ type:'mse', isLive:true, url });
-    tsPlayer.attachMediaElement(video);
-    tsPlayer.load();
-    tsPlayer.on(mpegts.Events.ERROR, (t, d) => {
-        try { tsPlayer.unload(); tsPlayer.detachMediaElement(); tsPlayer.destroy(); } catch(e) {}
-        tsPlayer = null;
-        tryNative(url, false); // RETTUNG: Native
-    });
-    video.play().then(onSuccess).catch(onSuccess);
-}
-
-// ENGINE D: Native HTML5 (Die absolute Brechstange für CORS)
-function tryNative(url, fallbackTo) {
-    video.src = url;
-    video.load();
-    video.oncanplay = () => video.play().then(onSuccess).catch(onSuccess);
-    video.onerror = () => {
-        if (fallbackTo === 'ts') tryTS(url);
-        else if (fallbackTo === 'hls') tryHLS(url);
-        else onError('Yayın desteklenmiyor');
-    };
-    // Timeout falls Native endlos lädt
-    setTimeout(() => { if (!loader.classList.contains('hidden') && video.readyState > 0) onSuccess(); }, 8000);
-}
-
-video.addEventListener('stalled', () => {
-    setTimeout(() => {
-        if (video.paused && retryCount === 0 && currentUrl && mode === 'video') onError('Bağlantı kesildi');
-    }, 12000);
-});
-
-// ── Menü & Zapping Logik (Bleibt unangetastet) ────────────
-function zap(dir) {
-    if (!urlList.length) return;
-    currentIndex = dir === 'up'
-        ? (currentIndex - 1 + urlList.length) % urlList.length
-        : (currentIndex + 1) % urlList.length;
-    startStream(urlList[currentIndex]);
-    updateZap();
-    toApp('INDEX:' + currentIndex);
-    toApp('SETTEST:' + urlList[currentIndex]);
-}
-
-function setMode(m) {
-    mode = m;
-    const isOverlay = m !== 'video' && m !== 'mute';
-    dimmer.classList.toggle('show', isOverlay);
-    mainMenu.classList.toggle('show', m === 'menu');
-    listOverlay.classList.toggle('show', m === 'channels' || m === 'categories');
-    if (isOverlay) hideZap();
-    if (m === 'menu')       { menuFocusIdx = 0; updateMenuFocus(); }
-    if (m === 'channels')   { listFocusIdx = currentIndex; showChannelList(); }
-    if (m === 'categories') { listFocusIdx = 0; showCategoryList(); }
-}
-function closeAll() { setMode('video'); }
-
-function updateMenuFocus() {
-    mainMenu.querySelectorAll('.mBtn').forEach((b, i) =>
-        b.classList.toggle('focused', i === menuFocusIdx));
-}
-function menuNav(dir) {
-    const n = mainMenu.querySelectorAll('.mBtn').length;
-    menuFocusIdx = Math.max(0, Math.min(n - 1, menuFocusIdx + (dir === 'up' ? -1 : 1)));
-    updateMenuFocus();
-}
-function menuSelect() {
-    const act = mainMenu.querySelectorAll('.mBtn')[menuFocusIdx]?.dataset.act;
-    if (!act) return;
-    closeAll();
-    switch(act) {
-        case 'channels':   setMode('channels');   break;
-        case 'categories': setMode('categories'); break;
-        case 'altplayer':  toApp('ALT_PLAYER');   break;
-        case 'goback':     toApp('BACK');         break;
-    }
-}
-mainMenu.querySelectorAll('.mBtn').forEach(b => {
-    b.addEventListener('click', () => {
-        menuFocusIdx = Array.from(mainMenu.querySelectorAll('.mBtn')).indexOf(b);
-        menuSelect();
-    });
-});
-dimmer.addEventListener('click', closeAll);
-
-const VISIBLE = 9;
-function renderListItems(list, activeIdx) {
-    listItemsEl.innerHTML = '';
-    const half  = Math.floor(VISIBLE / 2);
-    const start = Math.max(0, Math.min(listFocusIdx - half, Math.max(0, list.length - VISIBLE)));
-    const end   = Math.min(start + VISIBLE, list.length);
-    for (let i = start; i < end; i++) {
-        const d = document.createElement('div');
-        d.className = 'lItem' + (i === listFocusIdx ? ' focused' : '') + (i === activeIdx ? ' current' : '');
-        d.textContent = (i + 1) + '.  ' + (list[i] || '');
-        const idx = i;
-        d.addEventListener('click', () => { listFocusIdx = idx; listSelect(); });
-        listItemsEl.appendChild(d);
-    }
-}
-function showChannelList() {
-    document.getElementById('listIcon').textContent      = '📋 ';
-    document.getElementById('listTitleText').textContent = 'Kanal Seç (' + nameList.length + ')';
-    renderListItems(nameList, currentIndex);
-}
-function showCategoryList() {
-    document.getElementById('listIcon').textContent      = '🗂️ ';
-    document.getElementById('listTitleText').textContent = 'Kategori Seç';
-    renderListItems(categoryList, -1);
-}
-function listNav(dir) {
-    const list = mode === 'channels' ? nameList : categoryList;
-    if (!list.length) return;
-    listFocusIdx = Math.max(0, Math.min(list.length - 1, listFocusIdx + (dir === 'up' ? -1 : 1)));
-    renderListItems(list, mode === 'channels' ? currentIndex : -1);
-}
-function listSelect() {
-    if (mode === 'channels') {
-        currentIndex = listFocusIdx;
-        closeAll(); startStream(urlList[currentIndex]); updateZap();
-        toApp('INDEX:' + currentIndex); toApp('SETTEST:' + urlList[currentIndex]);
-    } else if (mode === 'categories') {
-        const cat = categoryList[listFocusIdx];
-        if (!cat) return;
-        mode = 'video'; dimmer.classList.remove('show'); listOverlay.classList.remove('show'); hideZap();
-        loadCategory(cat);
-    }
-}
-
-function parseXtreamUrl(url) {
-    try {
-        const host = url.match(/^(https?:\/\/[^/]+)/)?.[1];
-        const user = decodeURIComponent(url.match(/[?&]username=([^&]+)/)?.[1] || '');
-        const pass = decodeURIComponent(url.match(/[?&]password=([^&]+)/)?.[1] || '');
-        return (host && user && pass) ? { host, user, pass } : null;
-    } catch(e) { return null; }
-}
-
-async function xtreamLoadCategoriesBackground() {
-    try {
-        const res  = await fetch(xtHost + '/player_api.php?username=' + encodeURIComponent(xtUser) + '&password=' + encodeURIComponent(xtPass) + '&action=get_live_categories');
-        const data = await res.json();
-        categoryList = data.map(c => c.category_name).filter(Boolean);
-    } catch(e) {}
-}
-
-async function xtreamLoadChannelsBackground(catName) {
-    try {
-        const catRes  = await fetch(xtHost + '/player_api.php?username=' + encodeURIComponent(xtUser) + '&password=' + encodeURIComponent(xtPass) + '&action=get_live_categories');
-        const catData = await catRes.json();
-        const found   = catData.find(c => (c.category_name || '').trim() === catName.trim());
-        if (!found) return;
-
-        const streamRes  = await fetch(xtHost + '/player_api.php?username=' + encodeURIComponent(xtUser) + '&password=' + encodeURIComponent(xtPass) + '&action=get_live_streams&category_id=' + found.category_id);
-        const data = await streamRes.json();
-
-        urlList = []; nameList = [];
-        for (const s of data) {
-            if (!s.name || !s.stream_id) continue;
-            nameList.push(s.name);
-            urlList.push(xtHost + '/' + xtUser + '/' + xtPass + '/' + s.stream_id);
+        function showChannelInfo(name, index) {
+            channelInfo.textContent    = (index + 1) + '. ' + name;
+            channelInfo.style.display  = 'block';
+            channelInfo.style.opacity  = '1';
+            if (infoTimer) clearTimeout(infoTimer);
+            infoTimer = setTimeout(() => {
+                channelInfo.style.opacity = '0';
+                setTimeout(() => { channelInfo.style.display = 'none'; }, 500);
+            }, 3000);
         }
-        const idx = urlList.findIndex(u => u === currentUrl);
-        if (idx >= 0) currentIndex = idx; else currentIndex = 0;
-    } catch(e) {}
-}
 
-async function loadCategory(cat) {
-    hideZap();
-    loaderText.textContent = 'Kategori yükleniyor...';
-    loaderSub.textContent  = cat;
-    loader.classList.remove('hidden');
+        function forcePlay() {
+            hasInteracted = true;
+            video.muted = false;
+            video.volume = 1.0;
+            video.play().catch(()=>{});
+            msg.style.display = 'none';
+        }
+        window.addEventListener('click', forcePlay);
 
-    if (isXtreamMode) {
-        try {
-            const catRes  = await fetch(xtHost + '/player_api.php?username=' + encodeURIComponent(xtUser) + '&password=' + encodeURIComponent(xtPass) + '&action=get_live_categories');
-            if (!catRes.ok) throw new Error('HTTP ' + catRes.status);
-            const catData = await catRes.json();
-            const found   = catData.find(c => (c.category_name || '').trim() === cat.trim());
-            if (!found) throw new Error('Bulunamadı');
+        window.addEventListener('keydown', function(e) {
+            if (!hasInteracted) forcePlay();
+            if (urlList.length === 0) return;
 
-            const streamRes  = await fetch(xtHost + '/player_api.php?username=' + encodeURIComponent(xtUser) + '&password=' + encodeURIComponent(xtPass) + '&action=get_live_streams&category_id=' + found.category_id);
-            if (!streamRes.ok) throw new Error('HTTP ' + streamRes.status);
-            const data = await streamRes.json();
-
-            urlList = []; nameList = [];
-            for (const s of data) {
-                if (!s.name || !s.stream_id) continue;
-                nameList.push(s.name);
-                urlList.push(xtHost + '/' + xtUser + '/' + xtPass + '/' + s.stream_id);
+            if (e.keyCode === 40 || e.keyCode === 229) { 
+                currentIndex = (currentIndex + 1) % urlList.length;
+                handleZapping();
+            } else if (e.keyCode === 38 || e.keyCode === 228) { 
+                currentIndex = (currentIndex - 1 + urlList.length) % urlList.length;
+                handleZapping();
             }
-            currentIndex = 0; hideLoader();
+        });
 
-            if (urlList.length) {
-                listFocusIdx = 0; mode = 'channels'; dimmer.classList.add('show'); listOverlay.classList.add('show'); showChannelList();
+        function handleZapping() {
+            showChannelInfo(nameList[currentIndex] || '?', currentIndex);
+            window.AppInventor.setWebViewString('INDEX:' + currentIndex);
+            if (zappingTimer) clearTimeout(zappingTimer);
+            zappingTimer = setTimeout(() => {
+                startStream(urlList[currentIndex]);
+            }, 100);
+        }
+
+        function onSuccess() {
+            spinner.style.display = 'none';
+            showStatus('✅ Yayın başladı', 'basarili', 5000);
+            retryCount = 0;
+            handlePlayback();
+        }
+
+        function onError(reason) {
+            retryCount++;
+            if (retryCount <= 1) {
+                // Try again quickly before giving up completely
+                showStatus('Yeniden deneniyor...', 'yukleniyor', 2000);
+                setTimeout(() => startStream(currentUrl), 2000);
+            } else {
+                spinner.style.display = 'none';
+                showStatus('❌ Yayın açılamadı', 'hata', 8000);
+                retryCount = 0;
             }
-        } catch(e) { hideLoader(); }
-    } else {
-        hideLoader(); toApp('CATEGORY:' + cat);
-    }
-}
+        }
 
-window.addEventListener('keydown', e => {
-    const up   = e.key === 'ArrowUp'   || e.keyCode === 38;
-    const down = e.key === 'ArrowDown' || e.keyCode === 40;
-    const ok   = e.key === 'Enter'     || e.keyCode === 13;
+        // --- THE WATERFALL ENGINE ---
 
-    if (mode === 'mute') { if (ok) { e.preventDefault(); doUnmute(); } return; }
-    if (mode === 'video') {
-        if (up)   { e.preventDefault(); zap('up'); }
-        if (down) { e.preventDefault(); zap('down'); }
-        if (ok) { e.preventDefault(); setMode('menu'); }
-        return;
-    }
-    e.preventDefault();
-    if (mode === 'menu') { if (up) menuNav('up'); if (down) menuNav('down'); if (ok) menuSelect(); return; }
-    if (mode === 'channels' || mode === 'categories') { if (up) listNav('up'); if (down) listNav('down'); if (ok) listSelect(); }
-});
+        function stopExistingPlayers() {
+            if (hlsPlayer) { hlsPlayer.destroy(); hlsPlayer = null; }
+            if (tsPlayer)  { try { tsPlayer.unload(); tsPlayer.detachMediaElement(); tsPlayer.destroy(); } catch(e){} tsPlayer = null; }
+            if (shakaPlayer) { try { shakaPlayer.destroy(); } catch(e){} shakaPlayer = null; }
+            video.src = "";
+            video.removeAttribute('src');
+            video.load();
+        }
 
-function handleCommand(cmd) {
-    if (!cmd) return;
-    if (cmd.startsWith('XTREAM_INIT:')) {
-        const parts   = cmd.slice(12).split('|||');
-        const m3uUrl  = parts[0] || ''; const catName = parts[1] || ''; const startUrl= parts[2] || '';
-        const creds   = parseXtreamUrl(m3uUrl);
-        if (!creds) return;
-        xtHost = creds.host; xtUser = creds.user; xtPass = creds.pass; isXtreamMode = true;
-        if (startUrl) startStream(startUrl);
-        xtreamLoadCategoriesBackground();
-        if (catName) xtreamLoadChannelsBackground(catName);
-        return;
-    }
-    if (cmd.startsWith('SETLIST:')) {
-        isXtreamMode = false; const p = cmd.slice(8).split('~~~');
-        urlList = p[0] ? p[0].split('||').filter(Boolean) : []; nameList = p[1] ? p[1].split('||').filter(Boolean) : [];
-        currentIndex = p[2] ? (parseInt(p[2]) || 0) : 0;
-        if (currentIndex >= urlList.length) currentIndex = 0;
-        retryCount = 0; if (urlList[currentIndex]) startStream(urlList[currentIndex]); return;
-    }
-    if (cmd.startsWith('NEWLIST:')) {
-        isXtreamMode = false; const p = cmd.slice(8).split('~~~');
-        urlList = p[0] ? p[0].split('||').filter(Boolean) : []; nameList = p[1] ? p[1].split('||').filter(Boolean) : [];
-        currentIndex = 0; retryCount = 0; hideLoader(); hideZap();
-        if (urlList.length) { listFocusIdx = 0; mode = 'channels'; dimmer.classList.add('show'); listOverlay.classList.add('show'); showChannelList(); }
-        return;
-    }
-    if (cmd.startsWith('PARSE_TEXT:')) {
-        if (!isXtreamMode) {
-            const lines = cmd.slice(11).split('\n'); const seen  = new Set(); categoryList = [];
-            for (const line of lines) {
-                if (!line.startsWith('#EXTINF')) continue;
-                const m = line.match(/group-title="([^"]*)"/i);
-                if (m) { const c = m[1].replace(/[\r\n\t]/g,'').trim(); if (c && !seen.has(c)) { seen.add(c); categoryList.push(c); } }
+        function startStream(url) {
+            if (!url) return;
+            currentUrl = url;
+            stopExistingPlayers();
+            spinner.style.display = 'block'; 
+            showStatus('⏳ Yayın yükleniyor...', 'yukleniyor', 30000);
+
+            const lo = url.toLowerCase();
+            
+            // 1. HARD BYPASS: If it's Tulix or Fiko, don't even try JS players.
+            // Android Native handles CORS issues much better than WebView JS.
+            if (lo.includes('tulix.tv') || lo.includes('fiko4k')) {
+                tryNative(url, false); // false means no further fallback if native fails
+                return;
             }
-        } return;
-    }
-    if (cmd === 'CMD:BACK') {
-        setTimeout(() => { currentCmd = ''; }, 600);
-        if (mode !== 'video' && mode !== 'mute') closeAll();
-        else if (mode === 'video') setMode('menu');
-        return;
-    }
-    if (cmd.startsWith('PLAY:')) { retryCount = 0; startStream(cmd.slice(5)); return; }
-}
 
-setInterval(() => {
-    try { const cmd = window.AppInventor.getWebViewString(); if (cmd && cmd !== currentCmd) { currentCmd = cmd; handleCommand(cmd); } } catch(e) {}
-}, 300);
-</script>
+            // 2. Format Detection
+            const isTS = /:\d{4,5}\/[^/]+\/[^/]+\/\d+$/.test(url) || lo.includes('type=m3u_plus') || lo.endsWith('.ts');
+            const isHLS = lo.includes('.m3u8');
+
+            // 3. Execution Order
+            if (isHLS) {
+                tryHLS(url);
+            } else if (isTS) {
+                tryTS(url);
+            } else {
+                tryShaka(url); // Unknown format, let Shaka try to figure it out
+            }
+        }
+
+        // ENGINE A: HLS.js
+        function tryHLS(url) {
+            if (typeof Hls === 'undefined' || !Hls.isSupported()) return tryShaka(url);
+            hlsPlayer = new Hls({ maxBufferLength: 30, enableWorker: true });
+            hlsPlayer.loadSource(url);
+            hlsPlayer.attachMedia(video);
+            hlsPlayer.on(Hls.Events.MANIFEST_PARSED, () => video.play().then(onSuccess).catch(onSuccess));
+            hlsPlayer.on(Hls.Events.ERROR, (e, data) => {
+                if (data.fatal) {
+                    hlsPlayer.destroy(); hlsPlayer = null;
+                    tryShaka(url); // FALLBACK to Shaka
+                }
+            });
+        }
+
+        // ENGINE B: Shaka Player (Extremely resilient)
+        function tryShaka(url) {
+            if (typeof shaka === 'undefined' || !shaka.Player.isBrowserSupported()) return tryNative(url, false);
+            shakaPlayer = new shaka.Player(video);
+            shakaPlayer.load(url).then(() => video.play().then(onSuccess).catch(onSuccess)).catch(e => {
+                shakaPlayer.destroy(); shakaPlayer = null;
+                tryNative(url, false); // FALLBACK to Native
+            });
+        }
+
+        // ENGINE C: MPEG-TS
+        function tryTS(url) {
+            if (typeof mpegts === 'undefined' || !mpegts.getFeatureList().mseLivePlayback) return tryNative(url, false);
+            tsPlayer = mpegts.createPlayer({ type:'mse', isLive:true, url });
+            tsPlayer.attachMediaElement(video);
+            tsPlayer.load();
+            tsPlayer.on(mpegts.Events.ERROR, (t, d) => {
+                try { tsPlayer.unload(); tsPlayer.detachMediaElement(); tsPlayer.destroy(); } catch(e) {}
+                tsPlayer = null;
+                tryNative(url, false); // FALLBACK to Native
+            });
+            video.play().then(onSuccess).catch(onSuccess);
+        }
+
+        // ENGINE D: Native HTML5 (Best for bypassing CORS)
+        function tryNative(url, fallbackToTS) {
+            video.src = url;
+            video.load();
+            video.oncanplay = () => video.play().then(onSuccess).catch(onSuccess);
+            video.onerror = () => {
+                if (fallbackToTS) tryTS(url);
+                else onError('Format desteklenmiyor');
+            };
+            
+            // Timeout to prevent endless loading spinner
+            setTimeout(() => { 
+                if (spinner.style.display !== 'none' && video.readyState > 0) onSuccess(); 
+            }, 8000);
+        }
+
+        function handlePlayback() {
+            if (hasInteracted) {
+                video.muted = false; video.play().catch(()=>{});
+                msg.style.display = 'none';
+            } else {
+                video.play().catch(()=>{});
+                msg.innerHTML     = 'Ses için OK tuşuna bas';
+                msg.style.display = 'block';
+            }
+        }
+
+        // --- Kodular Communication ---
+        function handleCommand(cmd) {
+            if (!cmd || cmd.startsWith('INDEX:')) return;
+            
+            if (cmd.startsWith('SETLIST:')) {
+                const parts = cmd.slice(8).split('~~~');
+                urlList = parts[0] ? parts[0].split('||') : [];
+                nameList = parts[1] ? parts[1].split('||') : [];
+                currentIndex = parts[2] ? parseInt(parts[2]) : 0;
+                if (urlList[currentIndex]) {
+                    startStream(urlList[currentIndex]);
+                    showChannelInfo(nameList[currentIndex] || '?', currentIndex);
+                }
+            } else if (cmd.startsWith('PLAY:')) {
+                retryCount = 0; // Reset retries on manual play
+                startStream(cmd.slice(5));
+            } else if (cmd.includes('://')) {
+                retryCount = 0;
+                startStream(cmd);
+            }
+        }
+
+        setInterval(() => {
+            try {
+                const cmd = window.AppInventor.getWebViewString();
+                if (cmd && cmd !== currentCmd) {
+                    currentCmd = cmd;
+                    handleCommand(cmd);
+                }
+            } catch(e) {}
+        }, 300);
+    </script>
 </body>
 </html>
