@@ -11,6 +11,7 @@
             margin: 0; padding: 0; width: 100%; height: 100%; 
             background-color: #000; overflow: hidden; 
             display: flex; justify-content: center; align-items: center;
+            font-family: sans-serif;
         }
         video { position: absolute; width: 100%; height: 100%; object-fit: contain; z-index: 1; }
         
@@ -23,115 +24,52 @@
         }
         @keyframes spin { to { transform: translate(-50%,-50%) rotate(360deg); } }
 
-        #msg { 
-            position: relative; z-index: 100; color: white; 
-            font-family: sans-serif; font-size: 22px; font-weight: bold;
-            text-align: center; background: rgba(0,0,0,0.7); 
-            padding: 25px; border-radius: 15px; border: 2px solid rgba(255,255,255,0.2);
+        #msg {
+            position: fixed; top: 20px; right: 20px; z-index: 400;
+            background: rgba(0,0,0,0.8); color: white;
+            padding: 10px 20px; border-radius: 8px; font-size: 16px;
+            display: none; border: 1px solid #e50914;
         }
-        #channelInfo {
-            position: fixed; bottom: 30px; left: 50%; transform: translateX(-50%);
-            z-index: 200; color: white; font-family: sans-serif; font-size: 20px;
-            font-weight: bold; background: rgba(0,0,0,0.75);
-            padding: 10px 24px; border-radius: 10px;
-            border: 2px solid rgba(255,255,255,0.15);
-            display: none; transition: opacity 0.5s;
+
+        #info {
+            position: fixed; bottom: 30px; left: 30px; z-index: 200;
+            background: rgba(0,0,0,0.8); color: white;
+            padding: 15px 25px; border-radius: 10px; font-size: 24px;
+            display: none; border-left: 5px solid #e50914;
         }
-        #streamStatus {
-            position: fixed; top: 10px; left: 10px; z-index: 300;
-            font-family: sans-serif; font-size: 14px; font-weight: bold;
-            padding: 8px 14px; border-radius: 8px;
-            display: none; transition: opacity 0.8s;
-        }
-        #streamStatus.yukleniyor { background: rgba(0,0,0,0.75); color: #ffcc00; border: 1px solid #ffcc00; }
-        #streamStatus.basarili   { background: rgba(0,80,0,0.8);  color: #00ff00; border: 1px solid #00ff00; }
-        #streamStatus.hata       { background: rgba(80,0,0,0.8);  color: #ff4444; border: 1px solid #ff4444; }
     </style>
 </head>
 <body>
-    <video id="video" playsinline autoplay muted></video>
-    <div id="spinner"></div> <div id="msg" style="display:none;"></div>
-    <div id="channelInfo"></div>
-    <div id="streamStatus"></div>
+
+    <video id="video" autoplay playsinline></video>
+    <div id="spinner"></div>
+    <div id="msg">Ses için ekrana dokun veya OK tuşuna bas</div>
+    <div id="info">Kanal Adı</div>
 
     <script>
-        const video        = document.getElementById('video');
-        const spinner      = document.getElementById('spinner');
-        const msg          = document.getElementById('msg');
-        const channelInfo  = document.getElementById('channelInfo');
-        const streamStatus = document.getElementById('streamStatus');
+        const video = document.getElementById('video');
+        const spinner = document.getElementById('spinner');
+        const msg = document.getElementById('msg');
+        const info = document.getElementById('info');
 
-        // Geänderte Variablen für den neuen Player-Code
-        let hls = null; 
-        let tsPlayer = null; 
-        let hasInteracted = false;
         let currentCmd = '';
-        let urlList = [], nameList = [], currentIndex = 0;
-        let infoTimer = null, statusTimer = null, zappingTimer = null;
+        let urlList = [];
+        let nameList = [];
+        let currentIndex = 0;
+        let hasInteracted = false;
 
-        function showStatus(text, type, hideAfter) {
-            if (statusTimer) clearTimeout(statusTimer);
-            streamStatus.textContent   = text;
-            streamStatus.className     = type;
-            streamStatus.style.display = 'block';
-            streamStatus.style.opacity = '1';
-            statusTimer = setTimeout(() => {
-                streamStatus.style.opacity = '0';
-                setTimeout(() => { streamStatus.style.display = 'none'; }, 800);
-            }, hideAfter || 5000);
-        }
+        let hls = null;
+        let tsPlayer = null;
 
         function showChannelInfo(name, index) {
-            channelInfo.textContent    = (index + 1) + '. ' + name;
-            channelInfo.style.display  = 'block';
-            channelInfo.style.opacity  = '1';
-            if (infoTimer) clearTimeout(infoTimer);
-            infoTimer = setTimeout(() => {
-                channelInfo.style.opacity = '0';
-                setTimeout(() => { channelInfo.style.display = 'none'; }, 500);
-            }, 3000);
+            info.innerHTML = `<b>${index + 1}.</b> ${name}`;
+            info.style.display = 'block';
+            setTimeout(() => { info.style.display = 'none'; }, 4000);
         }
 
-        function forcePlay() {
-            hasInteracted = true;
-            video.muted = false;
-            video.volume = 1.0;
-            video.play().catch(()=>{});
-            msg.style.display = 'none';
-        }
-        window.addEventListener('click', forcePlay);
-
-        window.addEventListener('keydown', function(e) {
-            if (!hasInteracted) forcePlay();
-            if (urlList.length === 0) return;
-
-            if (e.keyCode === 40 || e.keyCode === 229) { 
-                currentIndex = (currentIndex + 1) % urlList.length;
-                handleZapping();
-            } else if (e.keyCode === 38 || e.keyCode === 228) { 
-                currentIndex = (currentIndex - 1 + urlList.length) % urlList.length;
-                handleZapping();
-            }
-        });
-
-        function handleZapping() {
-            showChannelInfo(nameList[currentIndex] || '?', currentIndex);
-            window.AppInventor.setWebViewString('INDEX:' + currentIndex);
-            if (zappingTimer) clearTimeout(zappingTimer);
-            zappingTimer = setTimeout(() => {
-                startStream(urlList[currentIndex]);
-            }, 100);
-        }
-
-        // --- DEIN NEUER SUPER-PLAYER CODE START ---
-
+        // --- DER NEUE SUPER-PLAYER-CODE ---
         function startStream(url) {
-            const video = document.querySelector('video');
-            const spinner = document.getElementById('spinner');
-            const msg = document.getElementById('msg');
-            
             if (spinner) spinner.style.display = 'block';
-            showStatus('⏳ Yayın yükleniyor...', 'yukleniyor', 15000);
 
             // 1. Alte Player sauber beenden
             if (hls) { hls.destroy(); hls = null; }
@@ -154,7 +92,6 @@
                     
                     hls.on(Hls.Events.MANIFEST_PARSED, function() {
                         if (spinner) spinner.style.display = 'none';
-                        showStatus('✅ Yayın başladı (HLS)', 'basarili', 5000);
                         handlePlayback();
                     });
 
@@ -163,11 +100,13 @@
                         if (data.fatal) {
                             switch (data.type) {
                                 case Hls.ErrorTypes.NETWORK_ERROR:
+                                    // Meistens CORS-Fehler (wie bei Tulix TV!) -> Fallback auf nativen Player
                                     console.log("CORS oder Netzwerkfehler, nutze nativen Fallback");
                                     hls.destroy();
                                     spielNativ(url);
                                     break;
                                 case Hls.ErrorTypes.MEDIA_ERROR:
+                                    // Proxy-Fehler (wie bei Bstelevision!) -> Versuch der Selbstheilung
                                     console.log("Stream hakt, versuche Reparatur...");
                                     hls.recoverMediaError();
                                     break;
@@ -179,14 +118,15 @@
                         }
                     });
                 } else {
+                    // Für sehr alte Geräte
                     spielNativ(url);
                 }
             } 
-            // 3. Ist es ein MPEG-TS Stream (oder hat gar keine Endung)
+            // 3. Ist es ein MPEG-TS Stream (oder hat gar keine Endung wie Fiko4k)
             else {
                 if (mpegts.getFeatureList().mseLivePlayback) {
                     tsPlayer = mpegts.createPlayer({
-                        type: 'ts', // ZWINGT den Player, es als TS zu verarbeiten
+                        type: 'ts', // ZWINGT den Player, es als TS zu verarbeiten (Löst das Fiko4k Problem!)
                         isLive: true,
                         url: url
                     }, {
@@ -197,9 +137,9 @@
                     tsPlayer.load();
                     tsPlayer.play().then(() => {
                         if (spinner) spinner.style.display = 'none';
-                        showStatus('✅ Yayın başladı (TS)', 'basarili', 5000);
                         handlePlayback();
                     }).catch((e) => {
+                        // Wenn mpegts scheitert, sofort nativer Fallback
                         spielNativ(url);
                     });
 
@@ -213,10 +153,64 @@
             }
         }
 
+        // 4. Der "Rettungs-Anker" (Nativer HTML5 Player)
         function spielNativ(url) {
-            const video = document.querySelector('video');
-            const spinner = document.getElementById('spinner');
-            
             video.src = url;
             video.play().then(() => {
                 if (spinner) spinner.style.display = 'none';
+                handlePlayback();
+            }).catch((e) => {
+                console.log("Stream konnte auch nativ nicht gestartet werden.", e);
+            });
+        }
+        // --- ENDE SUPER-PLAYER-CODE ---
+
+        // Autoplay Policy Handling
+        document.addEventListener('click', () => { hasInteracted = true; handlePlayback(); });
+        document.addEventListener('keydown', () => { hasInteracted = true; handlePlayback(); });
+
+        function handlePlayback() {
+            if (hasInteracted) {
+                video.muted = false; 
+                video.play().catch(()=>{});
+                msg.style.display = 'none';
+            } else {
+                video.muted = true; // Video muss gemutet sein um Autoplay zu erzwingen, bevor Nutzer klickt
+                video.play().catch(()=>{});
+                msg.innerHTML = 'Ses için ekrana dokun veya OK tuşuna bas';
+                msg.style.display = 'block';
+            }
+        }
+
+        function handleCommand(cmd) {
+            if (!cmd || cmd.startsWith('INDEX:')) return;
+            
+            if (cmd.startsWith('SETLIST:')) {
+                const parts = cmd.slice(8).split('~~~');
+                urlList = parts[0] ? parts[0].split('||') : [];
+                nameList = parts[1] ? parts[1].split('||') : [];
+                currentIndex = parts[2] ? parseInt(parts[2]) : 0;
+                
+                if (urlList[currentIndex]) {
+                    startStream(urlList[currentIndex]);
+                    showChannelInfo(nameList[currentIndex] || '?', currentIndex);
+                }
+            } else if (cmd.startsWith('PLAY:')) {
+                startStream(cmd.slice(5));
+            } else if (cmd.includes('://')) {
+                startStream(cmd);
+            }
+        }
+
+        setInterval(() => {
+            try {
+                const cmd = window.AppInventor.getWebViewString();
+                if (cmd && cmd !== currentCmd) {
+                    currentCmd = cmd;
+                    handleCommand(cmd);
+                }
+            } catch(e) {}
+        }, 300);
+    </script>
+</body>
+</html>
