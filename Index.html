@@ -1,0 +1,270 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Universal IPTV Player</title>
+    <script src="https://cdn.jsdelivr.net/npm/hls.js@latest"></script>
+    <script src="https://cdn.jsdelivr.net/npm/mpegts.js@latest/dist/mpegts.min.js"></script>
+    <style>
+        body, html { 
+            margin: 0; padding: 0; width: 100%; height: 100%; 
+            background-color: #000; overflow: hidden; 
+            display: flex; justify-content: center; align-items: center;
+        }
+        video { position: absolute; width: 100%; height: 100%; object-fit: contain; z-index: 1; }
+        
+        #spinner {
+            position: fixed; top: 50%; left: 50%; transform: translate(-50%,-50%);
+            z-index: 300; width: 60px; height: 60px;
+            border: 5px solid rgba(255,255,255,0.2);
+            border-top: 5px solid #e50914; border-radius: 50%;
+            display: none; animation: spin 0.8s linear infinite;
+        }
+        @keyframes spin { to { transform: translate(-50%,-50%) rotate(360deg); } }
+
+        #msg { 
+            position: relative; z-index: 100; color: white; 
+            font-family: sans-serif; font-size: 22px; font-weight: bold;
+            text-align: center; background: rgba(0,0,0,0.7); 
+            padding: 25px; border-radius: 15px; border: 2px solid rgba(255,255,255,0.2);
+        }
+        #channelInfo {
+            position: fixed; bottom: 30px; left: 50%; transform: translateX(-50%);
+            z-index: 200; color: white; font-family: sans-serif; font-size: 20px;
+            font-weight: bold; background: rgba(0,0,0,0.75);
+            padding: 10px 24px; border-radius: 10px;
+            border: 2px solid rgba(255,255,255,0.15);
+            display: none; transition: opacity 0.5s;
+        }
+        #streamStatus {
+            position: fixed; top: 10px; left: 10px; z-index: 300;
+            font-family: sans-serif; font-size: 14px; font-weight: bold;
+            padding: 8px 14px; border-radius: 8px;
+            display: none; transition: opacity 0.8s;
+        }
+        #streamStatus.yukleniyor { background: rgba(0,0,0,0.75); color: #ffcc00; border: 1px solid #ffcc00; }
+        #streamStatus.basarili   { background: rgba(0,80,0,0.8);  color: #00ff00; border: 1px solid #00ff00; }
+        #streamStatus.hata       { background: rgba(80,0,0,0.8);  color: #ff4444; border: 1px solid #ff4444; }
+    </style>
+</head>
+<body>
+    <video id="video" playsinline autoplay muted></video>
+    <div id="spinner"></div> <div id="msg" style="display:none;"></div>
+    <div id="channelInfo"></div>
+    <div id="streamStatus"></div>
+
+    <script>
+        const video        = document.getElementById('video');
+        const spinner      = document.getElementById('spinner');
+        const msg          = document.getElementById('msg');
+        const channelInfo  = document.getElementById('channelInfo');
+        const streamStatus = document.getElementById('streamStatus');
+
+        let hlsPlayer = null, tsPlayer = null, hasInteracted = false;
+        let currentCmd = '';
+        let urlList = [], nameList = [], currentIndex = 0;
+        let infoTimer = null, statusTimer = null, zappingTimer = null;
+
+        // VERBESSERTE HLS CONFIG: Gibt lahmen Servern mehr Zeit, aber lädt schneller los
+        const HLS_CONFIG = {
+            startLevel: -1,
+            autoStartLoad: true,
+            startFragPrefetch: true,
+            maxBufferLength: 30,
+            maxMaxBufferLength: 60,
+            manifestLoadingTimeOut: 15000, // Von 8s auf 15s erhöht für .txt/.gif links
+            manifestLoadingMaxRetry: 2,    // Weniger Retries, um schneller auf Fallback zu wechseln
+            levelLoadingTimeOut: 10000,
+            fragLoadingTimeOut: 20000,
+            enableWorker: true,
+            lowLatencyMode: true,          // Zwingt HLS schneller zu starten
+            xhrSetup: function(xhr) { xhr.withCredentials = false; }
+        };
+
+        function showStatus(text, type, hideAfter) {
+            if (statusTimer) clearTimeout(statusTimer);
+            streamStatus.textContent   = text;
+            streamStatus.className     = type;
+            streamStatus.style.display = 'block';
+            streamStatus.style.opacity = '1';
+            statusTimer = setTimeout(() => {
+                streamStatus.style.opacity = '0';
+                setTimeout(() => { streamStatus.style.display = 'none'; }, 800);
+            }, hideAfter || 5000);
+        }
+
+        function showChannelInfo(name, index) {
+            channelInfo.textContent    = (index + 1) + '. ' + name;
+            channelInfo.style.display  = 'block';
+            channelInfo.style.opacity  = '1';
+            if (infoTimer) clearTimeout(infoTimer);
+            infoTimer = setTimeout(() => {
+                channelInfo.style.opacity = '0';
+                setTimeout(() => { channelInfo.style.display = 'none'; }, 500);
+            }, 3000);
+        }
+
+        function forcePlay() {
+            hasInteracted = true;
+            video.muted = false;
+            video.volume = 1.0;
+            video.play().catch(()=>{});
+            msg.style.display = 'none';
+        }
+        window.addEventListener('click', forcePlay);
+
+        window.addEventListener('keydown', function(e) {
+            if (!hasInteracted) forcePlay();
+            if (urlList.length === 0) return;
+
+            if (e.keyCode === 40 || e.keyCode === 229) { 
+                currentIndex = (currentIndex + 1) % urlList.length;
+                handleZapping();
+            } else if (e.keyCode === 38 || e.keyCode === 228) { 
+                currentIndex = (currentIndex - 1 + urlList.length) % urlList.length;
+                handleZapping();
+            }
+        });
+
+        function handleZapping() {
+            showChannelInfo(nameList[currentIndex] || '?', currentIndex);
+            window.AppInventor.setWebViewString('INDEX:' + currentIndex);
+            if (zappingTimer) clearTimeout(zappingTimer);
+            zappingTimer = setTimeout(() => {
+                startStream(urlList[currentIndex]);
+            }, 100);
+        }
+
+        function stopExistingPlayers() {
+            if (hlsPlayer) { hlsPlayer.destroy(); hlsPlayer = null; }
+            if (tsPlayer)  {
+                tsPlayer.unload(); tsPlayer.detachMediaElement();
+                tsPlayer.destroy(); tsPlayer = null;
+            }
+            video.src = "";
+            video.load();
+        }
+
+        function tryDirectPlay(url) {
+            video.src = url;
+            video.load();
+            const onCanPlay = () => {
+                spinner.style.display = 'none';
+                showStatus('✅ Yayın başladı', 'basarili', 5000);
+                cleanup();
+                handlePlayback();
+            };
+            const onError = () => {
+                spinner.style.display = 'none';
+                showStatus('❌ Yayın açılamadı', 'hata', 8000);
+                cleanup();
+            };
+            function cleanup() {
+                video.removeEventListener('canplay', onCanPlay);
+                video.removeEventListener('error', onError);
+            }
+            video.addEventListener('canplay', onCanPlay);
+            video.addEventListener('error', onError);
+            handlePlayback();
+        }
+
+        function startStream(url) {
+            if (!url) return;
+            stopExistingPlayers();
+            spinner.style.display = 'block'; 
+            showStatus('⏳ Yayın yükleniyor...', 'yukleniyor', 30000);
+
+            const lo = url.toLowerCase();
+            
+            // VERBESSERUNG 1: Erkennung sicherer gemacht. 
+            // TS Player darf nicht bei .gif oder .txt anspringen, auch wenn live.php im Link steht.
+            const isDisguisedHLS = lo.includes('.gif') || lo.includes('.txt') || lo.includes('.css');
+            const isTS = (lo.includes('.ts') || lo.includes('extension=ts') || lo.includes('live.php') || lo.includes('type=m3u_plus')) && !isDisguisedHLS;
+
+            if (isTS && mpegts.getFeatureList().mseLivePlayback) {
+                // VERBESSERUNG 2: "liveBufferLatencyChasing" entfernt und "enableStashBuffer: false" hinzugefügt für extrem schnellen Start bei TS.
+                tsPlayer = mpegts.createPlayer({
+                    type: 'mse', isLive: true, url,
+                    config: { enableWorker: true, enableStashBuffer: false, stashInitialSize: 128 }
+                });
+                tsPlayer.attachMediaElement(video);
+                tsPlayer.load();
+                
+                let isPlaying = false;
+                tsPlayer.on(mpegts.Events.MEDIA_INFO, () => {
+                    spinner.style.display = 'none';
+                    showStatus('✅ Yayın başladı', 'basarili', 5000);
+                    handlePlayback();
+                    isPlaying = true;
+                });
+                tsPlayer.on(mpegts.Events.ERROR, () => {
+                    if(!isPlaying) {
+                        spinner.style.display = 'none';
+                        showStatus('❌ Yayın hatası', 'hata', 8000);
+                        tryDirectPlay(url);
+                    }
+                });
+
+            } else if (Hls.isSupported()) {
+                // VERBESSERUNG 3: Das !isWorker Limit wurde entfernt, Cloudflare Workers dürfen jetzt HLS nutzen.
+                hlsPlayer = new Hls(HLS_CONFIG);
+                hlsPlayer.loadSource(url);
+                hlsPlayer.attachMedia(video);
+                hlsPlayer.on(Hls.Events.MANIFEST_PARSED, () => {
+                    spinner.style.display = 'none';
+                    showStatus('✅ Yayın başladı', 'basarili', 5000);
+                    handlePlayback();
+                });
+                hlsPlayer.on(Hls.Events.ERROR, function(e, data) {
+                    if (data.fatal) {
+                        hlsPlayer.destroy(); hlsPlayer = null;
+                        tryDirectPlay(url);
+                    }
+                });
+            } else {
+                tryDirectPlay(url);
+            }
+        }
+
+        function handlePlayback() {
+            if (hasInteracted) {
+                video.muted = false; video.play().catch(()=>{});
+                msg.style.display = 'none';
+            } else {
+                video.play().catch(()=>{});
+                msg.innerHTML     = 'Ses için OK tuşuna bas';
+                msg.style.display = 'block';
+            }
+        }
+
+        function handleCommand(cmd) {
+            if (!cmd || cmd.startsWith('INDEX:')) return;
+            if (cmd.startsWith('SETLIST:')) {
+                const parts = cmd.slice(8).split('~~~');
+                urlList = parts[0] ? parts[0].split('||') : [];
+                nameList = parts[1] ? parts[1].split('||') : [];
+                currentIndex = parts[2] ? parseInt(parts[2]) : 0;
+                if (urlList[currentIndex]) {
+                    startStream(urlList[currentIndex]);
+                    showChannelInfo(nameList[currentIndex] || '?', currentIndex);
+                }
+            } else if (cmd.startsWith('PLAY:')) {
+                startStream(cmd.slice(5));
+            } else if (cmd.includes('://')) {
+                startStream(cmd);
+            }
+        }
+
+        setInterval(() => {
+            try {
+                const cmd = window.AppInventor.getWebViewString();
+                if (cmd && cmd !== currentCmd) {
+                    currentCmd = cmd;
+                    handleCommand(cmd);
+                }
+            } catch(e) {}
+        }, 300);
+    </script>
+</body>
+</html>
