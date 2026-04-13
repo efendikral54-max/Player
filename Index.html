@@ -125,13 +125,13 @@
 
         function stopExistingPlayers() {
             if (hlsPlayer) { hlsPlayer.destroy(); hlsPlayer = null; }
-            if (tsPlayer)  { tsPlayer.unload(); tsPlayer.detachMediaElement(); tsPlayer.destroy(); tsPlayer = null; }
+            if (tsPlayer)  { try { tsPlayer.unload(); tsPlayer.detachMediaElement(); tsPlayer.destroy(); } catch(e){} tsPlayer = null; }
             video.src = "";
             video.load();
         }
 
         function tryDirectPlay(url) {
-            console.log("Versuche Native Wiedergabe...");
+            console.log("Fallback: Native Player");
             video.src = url;
             video.load();
             video.play().then(() => {
@@ -146,24 +146,24 @@
 
         function startStream(url) {
             if (!url) return;
+            url = url.trim();
             stopExistingPlayers();
             spinner.style.display = 'block';
             showStatus('⏳ Yayın yükleniyor...', 'yukleniyor', 30000);
 
             const lo = url.toLowerCase();
+            // Tulix & HLS Check
+            const isHLS = lo.includes('.m3u8') || lo.includes('tracks-v');
+            // Xtream-Direktlink Check (wie fiko4k:8080/.../656398)
+            const isXtreamTS = /:\d{4,5}\/[^/]+\/[^/]+\/\d+$/.test(url);
 
-            // Xtream Check: Wenn URL auf einer Nummer endet (wie Fiko4k), ist es fast immer MPEG-TS
-            const isXtreamTS = /:\d{4,5}\/[^/]+\/[^/]+\/\d+$/.test(url) || lo.includes('extension=ts');
-            const isHLS = lo.includes('.m3u8') || lo.includes('tracks-v') || lo.includes('mono.m3u8');
-
-            if (isXtreamTS && !isHLS) {
-                // Fiko4k Fall: Direkt als TS versuchen
-                tryTS(url);
-            } else if (isHLS) {
-                // Tulix Fall: HLS versuchen
+            if (isHLS) {
                 tryHLS(url);
+            } else if (isXtreamTS || lo.includes('extension=ts')) {
+                // Fiko4k Fall: Direkt TS versuchen, da kein .m3u8 vorhanden
+                tryTS(url);
             } else {
-                // Rest: Erst HLS, dann Fallback
+                // Unbekannt: HLS zuerst, dann Fallback
                 tryHLS(url);
             }
         }
@@ -175,13 +175,13 @@
             hlsPlayer.attachMedia(video);
             hlsPlayer.on(Hls.Events.MANIFEST_PARSED, () => {
                 spinner.style.display = 'none';
-                showStatus('✅ Yayın başladı', 'basarili', 5000);
+                showStatus('✅ Yayın başladı (HLS)', 'basarili', 5000);
                 handlePlayback();
             });
             hlsPlayer.on(Hls.Events.ERROR, (e, data) => {
                 if (data.fatal) {
                     hlsPlayer.destroy(); hlsPlayer = null;
-                    // Bei Tulix (CORS/Network Error) direkt NATIV versuchen
+                    // Wenn Netzwerk-Fehler (CORS), dann direkt Nativ versuchen (Tulix Lösung)
                     if (data.type === Hls.ErrorTypes.NETWORK_ERROR) {
                         tryDirectPlay(url);
                     } else {
@@ -198,7 +198,7 @@
             tsPlayer.load();
             tsPlayer.play().then(() => {
                 spinner.style.display = 'none';
-                showStatus('✅ Yayın başladı', 'basarili', 5000);
+                showStatus('✅ Yayın başladı (TS)', 'basarili', 5000);
                 handlePlayback();
             }).catch(() => {
                 if (tsPlayer) { tsPlayer.destroy(); tsPlayer = null; }
@@ -212,7 +212,7 @@
                 msg.style.display = 'none';
             } else {
                 video.play().catch(()=>{});
-                msg.innerHTML = 'Ses için OK tuşuna bas';
+                msg.innerHTML = 'Ses für OK';
                 msg.style.display = 'block';
             }
         }
