@@ -169,62 +169,109 @@
             handlePlayback();
         }
 
+       let hls = null;
+        let tsPlayer = null;
+
         function startStream(url) {
-            if (!url) return;
-            stopExistingPlayers();
-            spinner.style.display = 'block'; 
-            showStatus('⏳ Yayın yükleniyor...', 'yukleniyor', 30000);
-
-            const lo = url.toLowerCase();
+            const video = document.querySelector('video');
+            const spinner = document.getElementById('spinner');
+            const msg = document.getElementById('msg');
             
-            // VERBESSERUNG 1: Erkennung sicherer gemacht. 
-            // TS Player darf nicht bei .gif oder .txt anspringen, auch wenn live.php im Link steht.
-            const isDisguisedHLS = lo.includes('.gif') || lo.includes('.txt') || lo.includes('.css');
-            const isTS = (lo.includes('.ts') || lo.includes('extension=ts') || lo.includes('live.php') || lo.includes('type=m3u_plus')) && !isDisguisedHLS;
+            if (spinner) spinner.style.display = 'block';
 
-            if (isTS && mpegts.getFeatureList().mseLivePlayback) {
-                // VERBESSERUNG 2: "liveBufferLatencyChasing" entfernt und "enableStashBuffer: false" hinzugefügt für extrem schnellen Start bei TS.
-                tsPlayer = mpegts.createPlayer({
-                    type: 'mse', isLive: true, url,
-                    config: { enableWorker: true, enableStashBuffer: false, stashInitialSize: 128 }
-                });
-                tsPlayer.attachMediaElement(video);
-                tsPlayer.load();
-                
-                let isPlaying = false;
-                tsPlayer.on(mpegts.Events.MEDIA_INFO, () => {
-                    spinner.style.display = 'none';
-                    showStatus('✅ Yayın başladı', 'basarili', 5000);
-                    handlePlayback();
-                    isPlaying = true;
-                });
-                tsPlayer.on(mpegts.Events.ERROR, () => {
-                    if(!isPlaying) {
-                        spinner.style.display = 'none';
-                        showStatus('❌ Yayın hatası', 'hata', 8000);
-                        tryDirectPlay(url);
-                    }
-                });
+            // 1. Alte Player sauber beenden
+            if (hls) { hls.destroy(); hls = null; }
+            if (tsPlayer) { tsPlayer.destroy(); tsPlayer = null; }
+            video.src = '';
+            video.removeAttribute('src');
+            video.load();
 
-            } else if (Hls.isSupported()) {
-                // VERBESSERUNG 3: Das !isWorker Limit wurde entfernt, Cloudflare Workers dürfen jetzt HLS nutzen.
-                hlsPlayer = new Hls(HLS_CONFIG);
-                hlsPlayer.loadSource(url);
-                hlsPlayer.attachMedia(video);
-                hlsPlayer.on(Hls.Events.MANIFEST_PARSED, () => {
-                    spinner.style.display = 'none';
-                    showStatus('✅ Yayın başladı', 'basarili', 5000);
-                    handlePlayback();
-                });
-                hlsPlayer.on(Hls.Events.ERROR, function(e, data) {
-                    if (data.fatal) {
-                        hlsPlayer.destroy(); hlsPlayer = null;
-                        tryDirectPlay(url);
-                    }
-                });
-            } else {
-                tryDirectPlay(url);
+            // 2. Ist es eine M3U8 (HLS) Datei oder ein PHP-Proxy?
+            if (url.includes('.m3u8') || url.includes('m3u8') || url.includes('.php')) {
+                if (Hls.isSupported()) {
+                    hls = new Hls({
+                        maxBufferLength: 30,
+                        liveSyncDuration: 3,
+                        enableWorker: true,
+                        lowLatencyMode: true
+                    });
+                    hls.loadSource(url);
+                    hls.attachMedia(video);
+                    
+                    hls.on(Hls.Events.MANIFEST_PARSED, function() {
+                        if (spinner) spinner.style.display = 'none';
+                        video.play().catch(()=>{});
+                    });
+
+                    // Fehlerbehandlung für Tulix und Proxy-Streams
+                    hls.on(Hls.Events.ERROR, function(event, data) {
+                        if (data.fatal) {
+                            switch (data.type) {
+                                case Hls.ErrorTypes.NETWORK_ERROR:
+                                    // Meistens CORS-Fehler (wie bei Tulix TV!) -> Fallback auf nativen Player
+                                    console.log("CORS oder Netzwerkfehler, nutze nativen Fallback");
+                                    hls.destroy();
+                                    spielNativ(url);
+                                    break;
+                                case Hls.ErrorTypes.MEDIA_ERROR:
+                                    // Proxy-Fehler (wie bei Bstelevision!) -> Versuch der Selbstheilung
+                                    console.log("Stream hakt, versuche Reparatur...");
+                                    hls.recoverMediaError();
+                                    break;
+                                default:
+                                    hls.destroy();
+                                    spielNativ(url);
+                                    break;
+                            }
+                        }
+                    });
+                } else {
+                    // Für sehr alte Geräte
+                    spielNativ(url);
+                }
+            } 
+            // 3. Ist es ein MPEG-TS Stream (oder hat gar keine Endung wie Fiko4k)
+            else {
+                if (mpegts.getFeatureList().mseLivePlayback) {
+                    tsPlayer = mpegts.createPlayer({
+                        type: 'ts', // ZWINGT den Player, es als TS zu verarbeiten (Löst das Fiko4k Problem!)
+                        isLive: true,
+                        url: url
+                    }, {
+                        enableWorker: true,
+                        liveBufferLatencyChasing: true
+                    });
+                    tsPlayer.attachMediaElement(video);
+                    tsPlayer.load();
+                    tsPlayer.play().then(() => {
+                        if (spinner) spinner.style.display = 'none';
+                    }).catch((e) => {
+                        // Wenn mpegts scheitert, sofort nativer Fallback
+                        spielNativ(url);
+                    });
+
+                    tsPlayer.on(mpegts.Events.ERROR, () => {
+                        if (tsPlayer) { tsPlayer.destroy(); tsPlayer = null; }
+                        spielNativ(url);
+                    });
+                } else {
+                    spielNativ(url);
+                }
             }
+        }
+
+        // 4. Der "Rettungs-Anker" (Nativer HTML5 Player)
+        // Ignoriert CORS-Fehler und springt ein, wenn JavaScript blockiert wird.
+        function spielNativ(url) {
+            const video = document.querySelector('video');
+            const spinner = document.getElementById('spinner');
+            
+            video.src = url;
+            video.play().then(() => {
+                if (spinner) spinner.style.display = 'none';
+            }).catch((e) => {
+                console.log("Stream konnte auch nativ nicht gestartet werden.", e);
+            });
         }
 
         function handlePlayback() {
