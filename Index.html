@@ -3,11 +3,9 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Canli TV Player Ultimate</title>
+    <title>Universal IPTV Player</title>
     <script src="https://cdn.jsdelivr.net/npm/hls.js@latest"></script>
     <script src="https://cdn.jsdelivr.net/npm/mpegts.js@latest/dist/mpegts.min.js"></script>
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/shaka-player/4.3.5/shaka-player.compiled.js"></script>
-
     <style>
         body, html { 
             margin: 0; padding: 0; width: 100%; height: 100%; 
@@ -52,26 +50,32 @@
 </head>
 <body>
     <video id="video" playsinline autoplay muted></video>
-    <div id="spinner"></div> 
-    <div id="msg" style="display:none;"></div>
+    <div id="spinner"></div> <div id="msg" style="display:none;"></div>
     <div id="channelInfo"></div>
     <div id="streamStatus"></div>
 
     <script>
-        // Initialize Shaka polyfills immediately
-        shaka.polyfill.installAll();
-
         const video        = document.getElementById('video');
         const spinner      = document.getElementById('spinner');
         const msg          = document.getElementById('msg');
         const channelInfo  = document.getElementById('channelInfo');
         const streamStatus = document.getElementById('streamStatus');
 
-        let hlsPlayer = null, tsPlayer = null, shakaPlayer = null;
-        let hasInteracted = false, currentCmd = '';
+        let hlsPlayer = null, tsPlayer = null, hasInteracted = false;
+        let currentCmd = '';
         let urlList = [], nameList = [], currentIndex = 0;
         let infoTimer = null, statusTimer = null, zappingTimer = null;
-        let retryCount = 0, currentUrl = '';
+
+        const HLS_CONFIG = {
+            startLevel: -1,
+            autoStartLoad: true,
+            maxBufferLength: 30,
+            manifestLoadingTimeOut: 10000,
+            manifestLoadingMaxRetry: 2,
+            enableWorker: true,
+            lowLatencyMode: true,
+            xhrSetup: function(xhr) { xhr.withCredentials = false; }
+        };
 
         function showStatus(text, type, hideAfter) {
             if (statusTimer) clearTimeout(statusTimer);
@@ -127,120 +131,156 @@
             }, 100);
         }
 
-        function onSuccess() {
-            spinner.style.display = 'none';
-            showStatus('✅ Yayın başladı', 'basarili', 5000);
-            retryCount = 0;
-            handlePlayback();
-        }
-
-        function onError(reason) {
-            retryCount++;
-            if (retryCount <= 1) {
-                // Try again quickly before giving up completely
-                showStatus('Yeniden deneniyor...', 'yukleniyor', 2000);
-                setTimeout(() => startStream(currentUrl), 2000);
-            } else {
-                spinner.style.display = 'none';
-                showStatus('❌ Yayın açılamadı', 'hata', 8000);
-                retryCount = 0;
-            }
-        }
-
-        // --- THE WATERFALL ENGINE ---
-
         function stopExistingPlayers() {
             if (hlsPlayer) { hlsPlayer.destroy(); hlsPlayer = null; }
-            if (tsPlayer)  { try { tsPlayer.unload(); tsPlayer.detachMediaElement(); tsPlayer.destroy(); } catch(e){} tsPlayer = null; }
-            if (shakaPlayer) { try { shakaPlayer.destroy(); } catch(e){} shakaPlayer = null; }
+            if (tsPlayer)  {
+                try { tsPlayer.unload(); tsPlayer.detachMediaElement(); tsPlayer.destroy(); } catch(e){}
+                tsPlayer = null;
+            }
             video.src = "";
             video.removeAttribute('src');
             video.load();
         }
 
+        function finalError() {
+            spinner.style.display = 'none';
+            showStatus('❌ Yayın açılamadı / Desteklenmiyor', 'hata', 8000);
+        }
+
         function startStream(url) {
             if (!url) return;
-            currentUrl = url;
             stopExistingPlayers();
-            spinner.style.display = 'block'; 
+            spinner.style.display = 'block';
             showStatus('⏳ Yayın yükleniyor...', 'yukleniyor', 30000);
 
             const lo = url.toLowerCase();
-            
-            // 1. HARD BYPASS: If it's Tulix or Fiko, don't even try JS players.
-            // Android Native handles CORS issues much better than WebView JS.
-            if (lo.includes('tulix.tv') || lo.includes('fiko4k')) {
-                tryNative(url, false); // false means no further fallback if native fails
-                return;
-            }
-
-            // 2. Format Detection
-            const isTS = /:\d{4,5}\/[^/]+\/[^/]+\/\d+$/.test(url) || lo.includes('type=m3u_plus') || lo.endsWith('.ts');
             const isHLS = lo.includes('.m3u8');
+            const isDisguisedHLS = lo.includes('.gif') || lo.includes('.txt') || lo.includes('.css');
+            const isTS = !isHLS && (lo.endsWith('.ts') || lo.includes('extension=ts') || lo.includes('live.php') || lo.includes('type=m3u_plus')) && !isDisguisedHLS;
+            const isXtream = /:\d{4,5}\/[^/]+\/[^/]+\/\d+$/.test(url);
 
-            // 3. Execution Order
             if (isHLS) {
-                tryHLS(url);
-            } else if (isTS) {
-                tryTS(url);
+                // Bei echten HLS-Streams: HLS.js -> Native
+                tryHLS(url, () => tryDirectPlay(url, finalError));
+            } else if (isXtream || isTS) {
+                // Bei Xtream/TS: NATIVE ZUERST (umgeht Codec-Sperren), dann TS, dann HLS
+                tryDirectPlay(url, () => tryTS(url, () => tryHLS(url, finalError)));
             } else {
-                tryShaka(url); // Unknown format, let Shaka try to figure it out
+                tryDirectPlay(url, () => tryHLS(url, () => tryTS(url, finalError)));
             }
         }
 
-        // ENGINE A: HLS.js
-        function tryHLS(url) {
-            if (typeof Hls === 'undefined' || !Hls.isSupported()) return tryShaka(url);
-            hlsPlayer = new Hls({ maxBufferLength: 30, enableWorker: true });
-            hlsPlayer.loadSource(url);
-            hlsPlayer.attachMedia(video);
-            hlsPlayer.on(Hls.Events.MANIFEST_PARSED, () => video.play().then(onSuccess).catch(onSuccess));
-            hlsPlayer.on(Hls.Events.ERROR, (e, data) => {
-                if (data.fatal) {
-                    hlsPlayer.destroy(); hlsPlayer = null;
-                    tryShaka(url); // FALLBACK to Shaka
+        // DER "LÜGENDETEKTOR": Prüft ob wirklich ein Bild ankommt
+        function checkVideoHealth(onFail) {
+            setTimeout(() => {
+                // Wenn Zeit 0 ist ODER Videobreite 0 ist (schwarzer Bildschirm wegen Codec-Sperre)
+                if (video.readyState < 2 || video.currentTime === 0 || video.videoWidth === 0) {
+                    console.log("Codec Blockiert oder schwarzes Bild. Wechsle Methode...");
+                    stopExistingPlayers();
+                    onFail();
                 }
-            });
+            }, 4500); // Gibt dem Stream 4.5 Sekunden Zeit, ein Bild zu produzieren
         }
 
-        // ENGINE B: Shaka Player (Extremely resilient)
-        function tryShaka(url) {
-            if (typeof shaka === 'undefined' || !shaka.Player.isBrowserSupported()) return tryNative(url, false);
-            shakaPlayer = new shaka.Player(video);
-            shakaPlayer.load(url).then(() => video.play().then(onSuccess).catch(onSuccess)).catch(e => {
-                shakaPlayer.destroy(); shakaPlayer = null;
-                tryNative(url, false); // FALLBACK to Native
-            });
-        }
-
-        // ENGINE C: MPEG-TS
-        function tryTS(url) {
-            if (typeof mpegts === 'undefined' || !mpegts.getFeatureList().mseLivePlayback) return tryNative(url, false);
-            tsPlayer = mpegts.createPlayer({ type:'mse', isLive:true, url });
-            tsPlayer.attachMediaElement(video);
-            tsPlayer.load();
-            tsPlayer.on(mpegts.Events.ERROR, (t, d) => {
-                try { tsPlayer.unload(); tsPlayer.detachMediaElement(); tsPlayer.destroy(); } catch(e) {}
-                tsPlayer = null;
-                tryNative(url, false); // FALLBACK to Native
-            });
-            video.play().then(onSuccess).catch(onSuccess);
-        }
-
-        // ENGINE D: Native HTML5 (Best for bypassing CORS)
-        function tryNative(url, fallbackToTS) {
+        function tryDirectPlay(url, onFail) {
             video.src = url;
             video.load();
-            video.oncanplay = () => video.play().then(onSuccess).catch(onSuccess);
-            video.onerror = () => {
-                if (fallbackToTS) tryTS(url);
-                else onError('Format desteklenmiyor');
+            let succeeded = false;
+
+            const onCanPlay = () => {
+                succeeded = true;
+                spinner.style.display = 'none';
+                showStatus('✅ Yayın başladı (Native)', 'basarili', 5000);
+                cleanup();
+                handlePlayback();
+                checkVideoHealth(onFail); // Auch hier absichern!
             };
-            
-            // Timeout to prevent endless loading spinner
-            setTimeout(() => { 
-                if (spinner.style.display !== 'none' && video.readyState > 0) onSuccess(); 
-            }, 8000);
+
+            const onError = () => {
+                if (!succeeded) { cleanup(); onFail(); }
+            };
+
+            function cleanup() {
+                video.removeEventListener('canplay', onCanPlay);
+                video.removeEventListener('error', onError);
+            }
+
+            video.addEventListener('canplay', onCanPlay);
+            video.addEventListener('error', onError);
+            handlePlayback();
+
+            // Timeout: Wenn Native nach 10s nichts macht -> Fallback
+            setTimeout(() => {
+                if (!succeeded) { cleanup(); onFail(); }
+            }, 10000);
+        }
+
+        function tryHLS(url, onFail) {
+            if (!Hls.isSupported()) { onFail(); return; }
+            hlsPlayer = new Hls(HLS_CONFIG);
+            hlsPlayer.loadSource(url);
+            hlsPlayer.attachMedia(video);
+            let succeeded = false;
+
+            hlsPlayer.on(Hls.Events.MANIFEST_PARSED, () => {
+                succeeded = true;
+                spinner.style.display = 'none';
+                showStatus('✅ Yayın başladı', 'basarili', 5000);
+                handlePlayback();
+                checkVideoHealth(onFail); // LÜGENDETEKTOR AKTIVIERT
+            });
+
+            hlsPlayer.on(Hls.Events.ERROR, function(e, data) {
+                if (data.fatal && !succeeded) {
+                    hlsPlayer.destroy(); hlsPlayer = null;
+                    onFail();
+                }
+            });
+
+            setTimeout(() => {
+                if (!succeeded && hlsPlayer) {
+                    hlsPlayer.destroy(); hlsPlayer = null;
+                    onFail();
+                }
+            }, 12000);
+        }
+
+        function tryTS(url, onFail) {
+            if (!mpegts.getFeatureList().mseLivePlayback) { onFail(); return; }
+            tsPlayer = mpegts.createPlayer({
+                type: 'mse', isLive: true, url,
+                config: { enableWorker: true, enableStashBuffer: false, stashInitialSize: 128 }
+            });
+            tsPlayer.attachMediaElement(video);
+            tsPlayer.load();
+            let reported = false;
+
+            tsPlayer.on(mpegts.Events.MEDIA_INFO, () => {
+                if (reported) return;
+                reported = true;
+                spinner.style.display = 'none';
+                showStatus('✅ Yayın başladı', 'basarili', 5000);
+                handlePlayback();
+                
+                // LÜGENDETEKTOR: Hier war der Hauptfehler vorher! mpegts lügt oft.
+                checkVideoHealth(onFail); 
+            });
+
+            tsPlayer.on(mpegts.Events.ERROR, () => {
+                if (!reported) {
+                    try { tsPlayer.unload(); tsPlayer.detachMediaElement(); tsPlayer.destroy(); } catch(e){}
+                    tsPlayer = null;
+                    onFail();
+                }
+            });
+
+            setTimeout(() => {
+                if (!reported && tsPlayer) {
+                    try { tsPlayer.unload(); tsPlayer.detachMediaElement(); tsPlayer.destroy(); } catch(e){}
+                    tsPlayer = null;
+                    onFail();
+                }
+            }, 10000);
         }
 
         function handlePlayback() {
@@ -254,10 +294,8 @@
             }
         }
 
-        // --- Kodular Communication ---
         function handleCommand(cmd) {
             if (!cmd || cmd.startsWith('INDEX:')) return;
-            
             if (cmd.startsWith('SETLIST:')) {
                 const parts = cmd.slice(8).split('~~~');
                 urlList = parts[0] ? parts[0].split('||') : [];
@@ -268,10 +306,8 @@
                     showChannelInfo(nameList[currentIndex] || '?', currentIndex);
                 }
             } else if (cmd.startsWith('PLAY:')) {
-                retryCount = 0; // Reset retries on manual play
                 startStream(cmd.slice(5));
             } else if (cmd.includes('://')) {
-                retryCount = 0;
                 startStream(cmd);
             }
         }
