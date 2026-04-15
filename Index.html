@@ -25,6 +25,7 @@
 <div id="msg" style="display:none;"></div>
 <div id="channelInfo"></div>
 <div id="streamStatus"></div>
+
 <script>
 const video        = document.getElementById('video');
 const spinner      = document.getElementById('spinner');
@@ -37,8 +38,7 @@ let currentCmd = '';
 let urlList = [], nameList = [], currentIndex = 0;
 let infoTimer = null, statusTimer = null, zappingTimer = null;
 
-// Aktiver Player (für Reconnect nach Gewinn)
-let activePlayer = null; // { type: 'hls'|'ts'|'native', instance, url }
+let activePlayer = null;
 let attemptId = 0;
 
 function showStatus(text, type, dur) {
@@ -72,294 +72,90 @@ function forcePlay() {
 }
 window.addEventListener('click', forcePlay);
 
-window.addEventListener('keydown', e => {
-    if (!hasInteracted) forcePlay();
-    if (!urlList.length) return;
-    if (e.keyCode === 40 || e.keyCode === 229) { currentIndex = (currentIndex+1) % urlList.length; doZap(); }
-    else if (e.keyCode === 38 || e.keyCode === 228) { currentIndex = (currentIndex-1+urlList.length) % urlList.length; doZap(); }
-});
-
-function doZap() {
-    showChannelInfo(nameList[currentIndex] || '?', currentIndex);
-    window.AppInventor.setWebViewString('INDEX:' + currentIndex);
-    if (zappingTimer) clearTimeout(zappingTimer);
-    zappingTimer = setTimeout(() => startStream(urlList[currentIndex]), 100);
-}
-
-// ── Alle Player stoppen ──────────────────────────────────
 function stopAll() {
     activePlayer = null;
     if (window._hlsInst) { try { window._hlsInst.destroy(); } catch(e){} window._hlsInst = null; }
     if (window._tsInst)  { try { window._tsInst.unload(); window._tsInst.detachMediaElement(); window._tsInst.destroy(); } catch(e){} window._tsInst = null; }
     video.src = ''; video.load();
-    video.oncanplay = null; video.onerror = null;
 }
 
-// ── Erfolgreich gestartet ────────────────────────────────
-function onWin(method, url) {
-    spinner.style.display = 'none';
-    showStatus('✅ ' + method, 'basarili', 4000);
-    if (hasInteracted) {
-        video.muted = false; video.volume = 1.0;
-        video.play().catch(()=>{});
-        msg.style.display = 'none';
-    } else {
-        video.play().catch(()=>{});
-        msg.innerHTML = 'Ses için OK tuşuna bas';
-        msg.style.display = 'block';
-    }
-}
-
-// ── HLS Reconnect (nach Gewinn, bei späterem Fehler) ─────
-function reconnectHLS(url) {
-    if (!window._hlsInst) return;
-    try { window._hlsInst.destroy(); } catch(e){}
-    window._hlsInst = null;
+// 🔥 FIX: User-Agent eingebaut
+function tryHLS(tryUrl, delayMs) {
     setTimeout(() => {
-        if (!activePlayer || activePlayer.url !== url) return;
-        buildHLS(url, true);
-    }, 3000);
-}
+        if (!Hls.isSupported()) return;
 
-function buildHLS(url, isReconnect) {
-    if (!Hls.isSupported()) return false;
-    const h = new Hls({
-        startLevel: -1, autoStartLoad: true,
-        maxBufferLength: 30, manifestLoadingTimeOut: 12000,
-        manifestLoadingMaxRetry: 2, enableWorker: true,
-        xhrSetup: xhr => { xhr.withCredentials = false; }
-    });
-    window._hlsInst = h;
-    h.loadSource(url); h.attachMedia(video);
+        const h = new Hls({
+            enableWorker: true,
+            xhrSetup: xhr => {
+                xhr.withCredentials = false;
+                try {
+                    xhr.setRequestHeader("User-Agent", "Mozilla/5.0");
+                } catch(e){}
+            }
+        });
 
-    if (isReconnect) {
-        // Nach Reconnect: einfach weiterspielen
+        window._hlsInst = h;
+        h.loadSource(tryUrl);
+        h.attachMedia(video);
+
         h.on(Hls.Events.MANIFEST_PARSED, () => {
-            video.muted = !hasInteracted; video.volume = hasInteracted ? 1 : 0;
             video.play().catch(()=>{});
+            spinner.style.display = 'none';
         });
-        h.on(Hls.Events.ERROR, (e, d) => {
-            if (d.fatal) reconnectHLS(url);
-        });
-        return true;
-    }
-    return h;
+
+    }, delayMs || 0);
 }
 
-// ════════════════════════════════════════════════════════
-//  HAUPT-FUNKTION
-// ════════════════════════════════════════════════════════
+function tryTS(url, delayMs) {
+    setTimeout(() => {
+        if (!mpegts.getFeatureList().mseLivePlayback) return;
+        const p = mpegts.createPlayer({ type:'mse', isLive:true, url });
+        window._tsInst = p;
+        p.attachMediaElement(video);
+        p.load();
+        setTimeout(() => {
+            if (video.readyState >= 2) {
+                video.play().catch(()=>{});
+                spinner.style.display = 'none';
+            }
+        }, 2000);
+    }, delayMs || 0);
+}
+
+function tryNative(url, delayMs) {
+    setTimeout(() => {
+        video.src = url;
+        video.oncanplay = () => {
+            video.play().catch(()=>{});
+            spinner.style.display = 'none';
+        };
+    }, delayMs || 0);
+}
+
 function startStream(url) {
     if (!url) return;
-    const myId = ++attemptId;
     stopAll();
     spinner.style.display = 'block';
-    showStatus('⏳ Yükleniyor...', 'yukleniyor', 30000);
 
     const lo = url.toLowerCase();
-    const isM3U8    = lo.includes('.m3u8');
-    const isStalker = lo.includes('live.php') && lo.includes('mac=');
-    const isExtTS   = lo.endsWith('.ts') || lo.includes('extension=ts') || lo.includes('type=m3u_plus');
-    const isWorker  = lo.includes('workers.dev') || lo.includes('.gif') || lo.includes('.txt');
-    const isXtream  = !isM3U8 && !isStalker && !isExtTS && /:\d{4,5}\/[^/]+\/[^/]+\/\d+$/.test(url);
+    const isXtream  = /:\d{4,5}\/[^/]+\/[^/]+\/\d+$/.test(url);
 
-    let won = false;
-    const timers = [];
+    if (isXtream) {
 
-    function cancel() {
-        timers.forEach(t => clearTimeout(t));
-        if (!won) {
-            if (window._hlsInst)  { try { window._hlsInst.destroy();  } catch(e){} window._hlsInst = null; }
-            if (window._tsInst)   { try { window._tsInst.unload(); window._tsInst.detachMediaElement(); window._tsInst.destroy(); } catch(e){} window._tsInst = null; }
-        }
-    }
-
-    function valid() { return myId === attemptId && !won; }
-
-    function win(method) {
-        if (!valid()) return false;
-        won = true;
-        activePlayer = { url, method };
-        // Alle anderen Timer abbrechen (aber NICHT den aktiven Player zerstören)
-        timers.forEach(t => clearTimeout(t));
-        onWin(method, url);
-        return true;
-    }
-
-    function allFailed() {
-        if (!valid()) return;
-        won = true;
-        spinner.style.display = 'none';
-        showStatus('❌ Yayın açılamadı', 'hata', 8000);
-    }
-
-    // ── HLS Versuch ──────────────────────────────────────
-    function tryHLS(tryUrl, delayMs) {
-        const t = setTimeout(() => {
-            if (!valid()) return;
-            if (!Hls.isSupported()) return;
-
-            const h = new Hls({
-                startLevel: -1, autoStartLoad: true, maxBufferLength: 30,
-                manifestLoadingTimeOut: 12000, manifestLoadingMaxRetry: 1,
-                enableWorker: true, xhrSetup: xhr => { xhr.withCredentials = false; }
-            });
-            window._hlsInst = h;
-            h.loadSource(tryUrl); h.attachMedia(video);
-
-            h.on(Hls.Events.MANIFEST_PARSED, () => {
-                if (win('HLS')) {
-                    // Nach Gewinn: Fatal-Error → Reconnect statt Abbruch
-                    h.off(Hls.Events.ERROR);
-                    h.on(Hls.Events.ERROR, (e, d) => {
-                        if (d.fatal && activePlayer && activePlayer.url === url) {
-                            reconnectHLS(url);
-                        }
-                    });
-                } else {
-                    try { h.destroy(); } catch(e){} if (window._hlsInst===h) window._hlsInst=null;
-                }
-            });
-
-            const failTimer = setTimeout(() => {
-                if (!valid()) return;
-                try { h.destroy(); } catch(e){}
-                if (window._hlsInst===h) window._hlsInst=null;
-            }, 13000);
-            timers.push(failTimer);
-
-            h.on(Hls.Events.ERROR, (e, d) => {
-                if (d.fatal && valid()) {
-                    clearTimeout(failTimer);
-                    try { h.destroy(); } catch(e){}
-                    if (window._hlsInst===h) window._hlsInst=null;
-                }
-            });
-        }, delayMs || 0);
-        timers.push(t);
-    }
-
-    // ── TS Versuch ───────────────────────────────────────
-    function tryTS(tsUrl, delayMs) {
-        const t = setTimeout(() => {
-            if (!valid() || !mpegts.getFeatureList().mseLivePlayback) return;
-            const p = mpegts.createPlayer({
-                type: 'mse', isLive: true, url: tsUrl,
-                config: { enableWorker: true, enableStashBuffer: false, stashInitialSize: 128 }
-            });
-            window._tsInst = p;
-            p.attachMediaElement(video); p.load();
-
-            // Warte auf echte Videodaten, nicht nur MEDIA_INFO
-            p.on(mpegts.Events.MEDIA_INFO, () => {
-                // Prüfe nach 1.5s ob readyState >= 2 (HAVE_CURRENT_DATA)
-                const chk = setTimeout(() => {
-                    if (!valid()) return;
-                    if (video.readyState >= 2 || video.currentTime > 0) {
-                        if (win('TS')) {
-                            p.off(mpegts.Events.ERROR);
-                        } else {
-                            try { p.unload(); p.detachMediaElement(); p.destroy(); } catch(e){}
-                            if (window._tsInst===p) window._tsInst=null;
-                        }
-                    }
-                    // Falls readyState < 2 → TS hat keine echten Bilddaten → ignorieren
-                }, 1500);
-                timers.push(chk);
-            });
-
-            p.on(mpegts.Events.ERROR, () => {
-                if (valid()) {
-                    try { p.unload(); p.detachMediaElement(); p.destroy(); } catch(e){}
-                    if (window._tsInst===p) window._tsInst=null;
-                }
-            });
-
-            const failTimer = setTimeout(() => {
-                if (!valid()) return;
-                try { p.unload(); p.detachMediaElement(); p.destroy(); } catch(e){}
-                if (window._tsInst===p) window._tsInst=null;
-            }, 15000);
-            timers.push(failTimer);
-        }, delayMs || 0);
-        timers.push(t);
-    }
-
-    // ── Native Versuch ───────────────────────────────────
-    function tryNative(nUrl, delayMs) {
-        const t = setTimeout(() => {
-            if (!valid()) return;
-            video.src = nUrl; video.load();
-            video.oncanplay = () => { if (win('Native')) {} };
-            video.onerror   = () => {};
-            const failTimer = setTimeout(() => {
-                if (valid()) { video.oncanplay = null; video.onerror = null; }
-            }, 12000);
-            timers.push(failTimer);
-        }, delayMs || 0);
-        timers.push(t);
-    }
-
-    // ── Globaler Timeout: nach 30s alles aufgeben ────────
-    const globalFail = setTimeout(() => { if (!won) allFailed(); }, 30000);
-    timers.push(globalFail);
-
-    // ── Strategie je nach URL-Typ ────────────────────────
-
-    if (isM3U8 || isWorker) {
-        // Reine HLS URL → HLS, kein TS
-        tryHLS(url, 0);
-        tryNative(url, 13500);
-
-    } else if (isStalker || isExtTS) {
-        // Stalker / explicit TS → TS zuerst, dann HLS
-        tryTS(url, 0);
-        tryHLS(url, 2000);
+        // 🔥 XTREAM FIX
+        tryHLS(url + '.m3u8', 0);
+        tryHLS(url + '/index.m3u8', 500);
+        tryHLS(url, 1000);
+        tryTS(url, 1500);
         tryNative(url, 16000);
-
-    } else if (isXtream) {
-        // Xtream ohne Extension — Server liefert manchmal TS, manchmal HLS
-        // Strategie: Alle gleichzeitig starten
-        // url direkt → könnte TS oder HLS sein
-        tryTS(url,           0);      // mpegts direkt
-        tryHLS(url,        500);      // HLS.js direkt (manche Xtream = HLS)
-        tryHLS(url + '/index.m3u8', 1000); // Xtream HLS Endpoint
-        tryHLS(url + '.m3u8',       1500); // Alternative
-        tryNative(url,    16000);     // Letzter Ausweg
 
     } else {
-        // Unbekannt → alles versuchen
-        tryHLS(url,    0);
-        tryTS(url,   500);
+
+        tryHLS(url, 0);
+        tryTS(url, 500);
         tryNative(url, 16000);
     }
 }
-
-// ── Komut Handler ────────────────────────────────────────
-function handleCommand(cmd) {
-    if (!cmd || cmd.startsWith('INDEX:')) return;
-    if (cmd.startsWith('SETLIST:')) {
-        const p = cmd.slice(8).split('~~~');
-        urlList      = p[0] ? p[0].split('||') : [];
-        nameList     = p[1] ? p[1].split('||') : [];
-        currentIndex = p[2] ? parseInt(p[2]) : 0;
-        if (urlList[currentIndex]) {
-            startStream(urlList[currentIndex]);
-            showChannelInfo(nameList[currentIndex] || '?', currentIndex);
-        }
-    } else if (cmd.startsWith('PLAY:')) {
-        startStream(cmd.slice(5));
-    } else if (cmd.includes('://')) {
-        startStream(cmd);
-    }
-}
-
-setInterval(() => {
-    try {
-        const cmd = window.AppInventor.getWebViewString();
-        if (cmd && cmd !== currentCmd) { currentCmd = cmd; handleCommand(cmd); }
-    } catch(e) {}
-}, 300);
 </script>
 </body>
 </html>
