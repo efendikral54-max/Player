@@ -7,197 +7,344 @@
     <script src="https://cdn.jsdelivr.net/npm/hls.js@latest"></script>
     <script src="https://cdn.jsdelivr.net/npm/mpegts.js@latest/dist/mpegts.min.js"></script>
     <style>
-        body, html { margin: 0; padding: 0; width: 100%; height: 100%; background-color: #000; overflow: hidden; display: flex; justify-content: center; align-items: center; }
-        video { position: absolute; width: 100%; height: 100%; object-fit: contain; z-index: 1; }
-        #spinner { position: fixed; top: 50%; left: 50%; transform: translate(-50%,-50%); z-index: 300; width: 60px; height: 60px; border: 5px solid rgba(255,255,255,0.2); border-top: 5px solid #e50914; border-radius: 50%; display: none; animation: spin 0.8s linear infinite; }
-        @keyframes spin { to { transform: translate(-50%,-50%) rotate(360deg); } }
-        #msg { position: relative; z-index: 100; color: white; font-family: sans-serif; font-size: 22px; font-weight: bold; text-align: center; background: rgba(0,0,0,0.8); padding: 25px; border-radius: 15px; border: 2px solid #e50914; display: none; }
-        #channelInfo { position: fixed; bottom: 30px; left: 50%; transform: translateX(-50%); z-index: 200; color: white; font-family: sans-serif; font-size: 20px; font-weight: bold; background: rgba(0,0,0,0.8); padding: 10px 24px; border-radius: 10px; border: 2px solid rgba(255,255,255,0.2); display: none; transition: opacity 0.5s; }
-        #streamStatus { position: fixed; top: 10px; left: 10px; z-index: 300; font-family: sans-serif; font-size: 14px; font-weight: bold; padding: 8px 14px; border-radius: 8px; display: none; transition: opacity 0.8s; }
-        #streamStatus.yukleniyor { background: rgba(0,0,0,0.75); color: #ffcc00; border: 1px solid #ffcc00; }
-        #streamStatus.basarili { background: rgba(0,80,0,0.8); color: #00ff00; border: 1px solid #00ff00; }
-        #streamStatus.hata { background: rgba(80,0,0,0.8); color: #ff4444; border: 1px solid #ff4444; }
+        body, html { margin:0; padding:0; width:100%; height:100%; background:#000; overflow:hidden; display:flex; justify-content:center; align-items:center; }
+        video { position:absolute; width:100%; height:100%; object-fit:contain; z-index:1; }
+        #spinner { position:fixed; top:50%; left:50%; transform:translate(-50%,-50%); z-index:300; width:60px; height:60px; border:5px solid rgba(255,255,255,0.2); border-top:5px solid #e50914; border-radius:50%; display:none; animation:spin 0.8s linear infinite; }
+        @keyframes spin { to { transform:translate(-50%,-50%) rotate(360deg); } }
+        #msg { position:relative; z-index:100; color:white; font-family:sans-serif; font-size:22px; font-weight:bold; text-align:center; background:rgba(0,0,0,0.7); padding:25px; border-radius:15px; border:2px solid rgba(255,255,255,0.2); }
+        #channelInfo { position:fixed; bottom:30px; left:50%; transform:translateX(-50%); z-index:200; color:white; font-family:sans-serif; font-size:20px; font-weight:bold; background:rgba(0,0,0,0.75); padding:10px 24px; border-radius:10px; border:2px solid rgba(255,255,255,0.15); display:none; transition:opacity 0.5s; }
+        #streamStatus { position:fixed; top:10px; left:10px; z-index:300; font-family:sans-serif; font-size:13px; font-weight:bold; padding:7px 13px; border-radius:8px; display:none; transition:opacity 0.8s; }
+        #streamStatus.yukleniyor { background:rgba(0,0,0,0.75); color:#ffcc00; border:1px solid #ffcc00; }
+        #streamStatus.basarili   { background:rgba(0,80,0,0.8);  color:#00ff00; border:1px solid #00ff00; }
+        #streamStatus.hata       { background:rgba(80,0,0,0.8);  color:#ff4444; border:1px solid #ff4444; }
     </style>
 </head>
 <body>
-    <video id="video" playsinline autoplay muted></video>
-    <div id="spinner"></div> <div id="msg"></div>
-    <div id="channelInfo"></div>
-    <div id="streamStatus"></div>
+<video id="video" playsinline autoplay muted></video>
+<div id="spinner"></div>
+<div id="msg" style="display:none;"></div>
+<div id="channelInfo"></div>
+<div id="streamStatus"></div>
+<script>
+const video        = document.getElementById('video');
+const spinner      = document.getElementById('spinner');
+const msg          = document.getElementById('msg');
+const channelInfo  = document.getElementById('channelInfo');
+const streamStatus = document.getElementById('streamStatus');
 
-    <script>
-        const video        = document.getElementById('video');
-        const spinner      = document.getElementById('spinner');
-        const msg          = document.getElementById('msg');
-        const channelInfo  = document.getElementById('channelInfo');
-        const streamStatus = document.getElementById('streamStatus');
+let hasInteracted = false;
+let currentCmd = '';
+let urlList = [], nameList = [], currentIndex = 0;
+let infoTimer = null, statusTimer = null, zappingTimer = null;
 
-        let hlsPlayer = null, tsPlayer = null, hasInteracted = false;
-        let currentCmd = '';
-        let urlList = [], nameList = [], currentIndex = 0;
-        let infoTimer = null, statusTimer = null, zappingTimer = null;
-        
-        let codecBlocked = false; // FLAG FÜR DEN LÜGENDETEKTOR
+// Aktiver Player (für Reconnect nach Gewinn)
+let activePlayer = null; // { type: 'hls'|'ts'|'native', instance, url }
+let attemptId = 0;
 
-        const HLS_CONFIG = {
-            maxBufferLength: 30, enableWorker: true, lowLatencyMode: true,
-            xhrSetup: function(xhr) { xhr.withCredentials = false; }
-        };
+function showStatus(text, type, dur) {
+    if (statusTimer) clearTimeout(statusTimer);
+    streamStatus.textContent   = text;
+    streamStatus.className     = type;
+    streamStatus.style.display = 'block';
+    streamStatus.style.opacity = '1';
+    statusTimer = setTimeout(() => {
+        streamStatus.style.opacity = '0';
+        setTimeout(() => streamStatus.style.display = 'none', 800);
+    }, dur || 5000);
+}
 
-        function showStatus(text, type, hideAfter) {
-            if (statusTimer) clearTimeout(statusTimer);
-            streamStatus.textContent = text; streamStatus.className = type;
-            streamStatus.style.display = 'block'; streamStatus.style.opacity = '1';
-            statusTimer = setTimeout(() => {
-                streamStatus.style.opacity = '0';
-                setTimeout(() => { streamStatus.style.display = 'none'; }, 800);
-            }, hideAfter || 5000);
-        }
+function showChannelInfo(name, index) {
+    channelInfo.textContent   = (index+1) + '. ' + name;
+    channelInfo.style.display = 'block';
+    channelInfo.style.opacity = '1';
+    if (infoTimer) clearTimeout(infoTimer);
+    infoTimer = setTimeout(() => {
+        channelInfo.style.opacity = '0';
+        setTimeout(() => channelInfo.style.display = 'none', 500);
+    }, 3000);
+}
 
-        function showChannelInfo(name, index) {
-            channelInfo.textContent = (index + 1) + '. ' + name;
-            channelInfo.style.display = 'block'; channelInfo.style.opacity = '1';
-            if (infoTimer) clearTimeout(infoTimer);
-            infoTimer = setTimeout(() => {
-                channelInfo.style.opacity = '0';
-                setTimeout(() => { channelInfo.style.display = 'none'; }, 500);
-            }, 3000);
-        }
+function forcePlay() {
+    hasInteracted = true;
+    video.muted = false; video.volume = 1.0;
+    video.play().catch(()=>{});
+    msg.style.display = 'none';
+}
+window.addEventListener('click', forcePlay);
 
-        function forcePlay() {
-            hasInteracted = true; video.muted = false; video.volume = 1.0;
+window.addEventListener('keydown', e => {
+    if (!hasInteracted) forcePlay();
+    if (!urlList.length) return;
+    if (e.keyCode === 40 || e.keyCode === 229) { currentIndex = (currentIndex+1) % urlList.length; doZap(); }
+    else if (e.keyCode === 38 || e.keyCode === 228) { currentIndex = (currentIndex-1+urlList.length) % urlList.length; doZap(); }
+});
+
+function doZap() {
+    showChannelInfo(nameList[currentIndex] || '?', currentIndex);
+    window.AppInventor.setWebViewString('INDEX:' + currentIndex);
+    if (zappingTimer) clearTimeout(zappingTimer);
+    zappingTimer = setTimeout(() => startStream(urlList[currentIndex]), 100);
+}
+
+// ── Alle Player stoppen ──────────────────────────────────
+function stopAll() {
+    activePlayer = null;
+    if (window._hlsInst) { try { window._hlsInst.destroy(); } catch(e){} window._hlsInst = null; }
+    if (window._tsInst)  { try { window._tsInst.unload(); window._tsInst.detachMediaElement(); window._tsInst.destroy(); } catch(e){} window._tsInst = null; }
+    video.src = ''; video.load();
+    video.oncanplay = null; video.onerror = null;
+}
+
+// ── Erfolgreich gestartet ────────────────────────────────
+function onWin(method, url) {
+    spinner.style.display = 'none';
+    showStatus('✅ ' + method, 'basarili', 4000);
+    if (hasInteracted) {
+        video.muted = false; video.volume = 1.0;
+        video.play().catch(()=>{});
+        msg.style.display = 'none';
+    } else {
+        video.play().catch(()=>{});
+        msg.innerHTML = 'Ses için OK tuşuna bas';
+        msg.style.display = 'block';
+    }
+}
+
+// ── HLS Reconnect (nach Gewinn, bei späterem Fehler) ─────
+function reconnectHLS(url) {
+    if (!window._hlsInst) return;
+    try { window._hlsInst.destroy(); } catch(e){}
+    window._hlsInst = null;
+    setTimeout(() => {
+        if (!activePlayer || activePlayer.url !== url) return;
+        buildHLS(url, true);
+    }, 3000);
+}
+
+function buildHLS(url, isReconnect) {
+    if (!Hls.isSupported()) return false;
+    const h = new Hls({
+        startLevel: -1, autoStartLoad: true,
+        maxBufferLength: 30, manifestLoadingTimeOut: 12000,
+        manifestLoadingMaxRetry: 2, enableWorker: true,
+        xhrSetup: xhr => { xhr.withCredentials = false; }
+    });
+    window._hlsInst = h;
+    h.loadSource(url); h.attachMedia(video);
+
+    if (isReconnect) {
+        h.on(Hls.Events.MANIFEST_PARSED, () => {
+            video.muted = !hasInteracted; video.volume = hasInteracted ? 1 : 0;
             video.play().catch(()=>{});
-            if (!codecBlocked) msg.style.display = 'none';
-        }
-        window.addEventListener('click', forcePlay);
-
-        window.addEventListener('keydown', function(e) {
-            if (!hasInteracted && !codecBlocked) forcePlay();
-            
-            // WENN CODEC BLOCKIERT IST UND OK GEDRÜCKT WIRD -> EXTERNER PLAYER
-            if (codecBlocked && (e.keyCode === 13 || e.key === 'Enter')) {
-                window.AppInventor.setWebViewString('ALT_PLAYER');
-                msg.style.display = 'none';
-                return;
-            }
-
-            if (urlList.length === 0) return;
-            if (e.keyCode === 40 || e.keyCode === 229) { currentIndex = (currentIndex + 1) % urlList.length; handleZapping(); } 
-            else if (e.keyCode === 38 || e.keyCode === 228) { currentIndex = (currentIndex - 1 + urlList.length) % urlList.length; handleZapping(); }
         });
+        h.on(Hls.Events.ERROR, (e, d) => {
+            if (d.fatal) reconnectHLS(url);
+        });
+        return true;
+    }
+    return h;
+}
 
-        function handleZapping() {
-            showChannelInfo(nameList[currentIndex] || '?', currentIndex);
-            window.AppInventor.setWebViewString('INDEX:' + currentIndex);
-            if (zappingTimer) clearTimeout(zappingTimer);
-            zappingTimer = setTimeout(() => { startStream(urlList[currentIndex]); }, 100);
+// ════════════════════════════════════════════════════════
+//  HAUPT-FUNKTION
+// ════════════════════════════════════════════════════════
+function startStream(rawUrl) {
+    if (!rawUrl) return;
+    const url = rawUrl.trim(); // FIX: Leerzeichen entfernen!
+    const myId = ++attemptId;
+    stopAll();
+    spinner.style.display = 'block';
+    showStatus('⏳ Yükleniyor...', 'yukleniyor', 30000);
+
+    const lo = url.toLowerCase();
+    const isM3U8    = lo.includes('.m3u8');
+    const isStalker = lo.includes('live.php') && lo.includes('mac=');
+    const isExtTS   = lo.endsWith('.ts') || lo.includes('extension=ts') || lo.includes('type=m3u_plus');
+    const isWorker  = lo.includes('workers.dev') || lo.includes('.gif') || lo.includes('.txt');
+    const isXtream  = !isM3U8 && !isStalker && !isExtTS && /:\d{4,5}\/[^/]+\/[^/]+\/\d+$/.test(url);
+
+    let won = false;
+    const timers = [];
+
+    function cancel() {
+        timers.forEach(t => clearTimeout(t));
+        if (!won) {
+            if (window._hlsInst)  { try { window._hlsInst.destroy();  } catch(e){} window._hlsInst = null; }
+            if (window._tsInst)   { try { window._tsInst.unload(); window._tsInst.detachMediaElement(); window._tsInst.destroy(); } catch(e){} window._tsInst = null; }
         }
+    }
 
-        function stopExistingPlayers() {
-            codecBlocked = false; // Reset
-            msg.style.display = 'none';
-            if (hlsPlayer) { hlsPlayer.destroy(); hlsPlayer = null; }
-            if (tsPlayer)  { tsPlayer.unload(); tsPlayer.detachMediaElement(); tsPlayer.destroy(); tsPlayer = null; }
-            video.src = ""; video.load();
-        }
+    function valid() { return myId === attemptId && !won; }
 
-        // --- DER LÜGENDETEKTOR ---
-        // Prüft ob nach 4 Sekunden wirklich ein Videobild da ist
-        function checkVideoHealth() {
-            setTimeout(() => {
-                if (video.videoWidth === 0) {
-                    console.log("Codec Blockade erkannt!");
-                    spinner.style.display = 'none';
-                    stopExistingPlayers();
-                    codecBlocked = true;
-                    msg.innerHTML = "⚠️ Video Format desteklenmiyor.<br><br>Harici Player'da açmak için <b>OK</b> tuşuna bas.";
-                    msg.style.display = 'block';
-                    showStatus('❌ Format Hatası', 'hata', 5000);
+    function win(method) {
+        if (!valid()) return false;
+        won = true;
+        activePlayer = { url, method };
+        timers.forEach(t => clearTimeout(t));
+        onWin(method, url);
+        return true;
+    }
+
+    function allFailed() {
+        if (!valid()) return;
+        won = true;
+        spinner.style.display = 'none';
+        showStatus('❌ Yayın açılamadı', 'hata', 8000);
+    }
+
+    // ── HLS Versuch ──────────────────────────────────────
+    function tryHLS(tryUrl, delayMs) {
+        const t = setTimeout(() => {
+            if (!valid() || !Hls.isSupported()) return;
+
+            const h = new Hls({
+                startLevel: -1, autoStartLoad: true, maxBufferLength: 30,
+                manifestLoadingTimeOut: 12000, manifestLoadingMaxRetry: 1,
+                enableWorker: true, xhrSetup: xhr => { xhr.withCredentials = false; }
+            });
+            window._hlsInst = h;
+            h.loadSource(tryUrl); h.attachMedia(video);
+
+            h.on(Hls.Events.MANIFEST_PARSED, () => {
+                if (win('HLS')) {
+                    h.off(Hls.Events.ERROR);
+                    h.on(Hls.Events.ERROR, (e, d) => {
+                        if (d.fatal && activePlayer && activePlayer.url === url) reconnectHLS(url);
+                    });
+                } else {
+                    try { h.destroy(); } catch(e){} if (window._hlsInst===h) window._hlsInst=null;
                 }
-            }, 4500); 
-        }
-
-        function tryDirectPlay(url) {
-            video.src = url; video.load();
-            const onCanPlay = () => {
-                spinner.style.display = 'none'; showStatus('✅ Yayın başladı', 'basarili', 5000);
-                cleanup(); handlePlayback(); checkVideoHealth();
-            };
-            const onError = () => {
-                spinner.style.display = 'none'; showStatus('❌ Yayın açılamadı', 'hata', 8000); cleanup();
-            };
-            function cleanup() { video.removeEventListener('canplay', onCanPlay); video.removeEventListener('error', onError); }
-            video.addEventListener('canplay', onCanPlay); video.addEventListener('error', onError);
-            handlePlayback();
-        }
-
-        function startStream(url) {
-            if (!url) return;
-            stopExistingPlayers();
-            spinner.style.display = 'block';
-            showStatus('⏳ Yayın yükleniyor...', 'yukleniyor', 30000);
-
-            const lo = url.toLowerCase();
-            const isHLS = lo.includes('.m3u8');
-            const isTS = !isHLS && (lo.endsWith('.ts') || lo.includes('extension=ts') || lo.includes('type=m3u_plus') || /:\d{4,5}\/[^/]+\/[^/]+\/\d+$/.test(url));
-
-            if (isHLS) { tryHLS(url, () => tryDirectPlay(url)); } 
-            else if (isTS) { tryTS(url, () => tryDirectPlay(url)); } 
-            else { tryHLS(url, () => tryTS(url, () => tryDirectPlay(url))); }
-        }
-
-        function tryHLS(url, onFail) {
-            if (!Hls.isSupported()) { onFail(); return; }
-            hlsPlayer = new Hls(HLS_CONFIG);
-            hlsPlayer.loadSource(url); hlsPlayer.attachMedia(video);
-            let succeeded = false;
-
-            hlsPlayer.on(Hls.Events.MANIFEST_PARSED, () => {
-                succeeded = true; spinner.style.display = 'none'; showStatus('✅ Yayın başladı', 'basarili', 5000);
-                handlePlayback(); checkVideoHealth();
             });
-            hlsPlayer.on(Hls.Events.ERROR, function(e, data) {
-                if (data.fatal && !succeeded) { hlsPlayer.destroy(); hlsPlayer = null; onFail(); }
+
+            const failTimer = setTimeout(() => {
+                if (!valid()) return;
+                try { h.destroy(); } catch(e){}
+                if (window._hlsInst===h) window._hlsInst=null;
+            }, 13000);
+            timers.push(failTimer);
+
+            h.on(Hls.Events.ERROR, (e, d) => {
+                if (d.fatal && valid()) {
+                    clearTimeout(failTimer);
+                    try { h.destroy(); } catch(e){}
+                    if (window._hlsInst===h) window._hlsInst=null;
+                }
             });
-            setTimeout(() => { if (!succeeded && hlsPlayer) { hlsPlayer.destroy(); hlsPlayer = null; onFail(); } }, 12000);
-        }
+        }, delayMs || 0);
+        timers.push(t);
+    }
 
-        function tryTS(url, onFail) {
-            if (!mpegts.getFeatureList().mseLivePlayback) { onFail(); return; }
-            tsPlayer = mpegts.createPlayer({ type: 'mse', isLive: true, url, config: { enableWorker: true } });
-            tsPlayer.attachMediaElement(video); tsPlayer.load();
-            let reported = false;
-
-            tsPlayer.on(mpegts.Events.MEDIA_INFO, () => {
-                if (reported) return; reported = true;
-                spinner.style.display = 'none'; showStatus('✅ Yayın başladı', 'basarili', 5000);
-                handlePlayback(); checkVideoHealth();
+    // ── TS Versuch (Mit HEVC-Blocker Fix) ────────────────
+    function tryTS(tsUrl, delayMs) {
+        const t = setTimeout(() => {
+            if (!valid() || !mpegts.getFeatureList().mseLivePlayback) return;
+            const p = mpegts.createPlayer({
+                type: 'mse', isLive: true, url: tsUrl,
+                config: { enableWorker: true, enableStashBuffer: false, stashInitialSize: 128 }
             });
-            tsPlayer.on(mpegts.Events.ERROR, () => {
-                if (!reported) { try { tsPlayer.unload(); tsPlayer.detachMediaElement(); tsPlayer.destroy(); } catch(e){} tsPlayer = null; onFail(); }
+            window._tsInst = p;
+            p.attachMediaElement(video); p.load();
+
+            p.on(mpegts.Events.MEDIA_INFO, () => {
+                // FIX: Warte 2.5s, um zu sehen, ob wirklich ein Bild ankommt (Lügendetektor)
+                const chk = setTimeout(() => {
+                    if (!valid()) return;
+                    if (video.videoWidth > 0 && (video.readyState >= 2 || video.currentTime > 0)) {
+                        if (win('TS')) { p.off(mpegts.Events.ERROR); }
+                    } else {
+                        // Fake Win (z.B. H.265/HEVC Codec Blockiert) -> Zerstören, damit Fallback übernehmen kann!
+                        try { p.unload(); p.detachMediaElement(); p.destroy(); } catch(e){}
+                        if (window._tsInst===p) window._tsInst=null;
+                    }
+                }, 2500);
+                timers.push(chk);
             });
-            setTimeout(() => { if (!reported && tsPlayer) { try { tsPlayer.unload(); tsPlayer.detachMediaElement(); tsPlayer.destroy(); } catch(e){} tsPlayer = null; onFail(); } }, 10000);
-        }
 
-        function handlePlayback() {
-            if (hasInteracted) { video.muted = false; video.play().catch(()=>{}); if(!codecBlocked) msg.style.display = 'none'; } 
-            else { video.play().catch(()=>{}); msg.innerHTML = 'Ses için OK tuşuna bas'; msg.style.display = 'block'; }
-        }
+            p.on(mpegts.Events.ERROR, () => {
+                if (valid()) {
+                    try { p.unload(); p.detachMediaElement(); p.destroy(); } catch(e){}
+                    if (window._tsInst===p) window._tsInst=null;
+                }
+            });
 
-        function handleCommand(cmd) {
-            if (!cmd || cmd.startsWith('INDEX:')) return;
-            if (cmd.startsWith('SETLIST:')) {
-                const parts = cmd.slice(8).split('~~~');
-                urlList = parts[0] ? parts[0].split('||') : []; nameList = parts[1] ? parts[1].split('||') : [];
-                currentIndex = parts[2] ? parseInt(parts[2]) : 0;
-                if (urlList[currentIndex]) { startStream(urlList[currentIndex]); showChannelInfo(nameList[currentIndex] || '?', currentIndex); }
-            } else if (cmd.startsWith('PLAY:')) { startStream(cmd.slice(5)); } 
-              else if (cmd.includes('://')) { startStream(cmd); }
-        }
+            const failTimer = setTimeout(() => {
+                if (!valid()) return;
+                try { p.unload(); p.detachMediaElement(); p.destroy(); } catch(e){}
+                if (window._tsInst===p) window._tsInst=null;
+            }, 15000);
+            timers.push(failTimer);
+        }, delayMs || 0);
+        timers.push(t);
+    }
 
-        setInterval(() => {
-            try { const cmd = window.AppInventor.getWebViewString(); if (cmd && cmd !== currentCmd) { currentCmd = cmd; handleCommand(cmd); } } catch(e) {}
-        }, 300);
-    </script>
+    // ── Native Versuch ───────────────────────────────────
+    function tryNative(nUrl, delayMs) {
+        const t = setTimeout(() => {
+            if (!valid()) return;
+            video.src = nUrl; video.load();
+            video.oncanplay = () => { if (win('Native')) {} };
+            video.onerror   = () => {};
+            const failTimer = setTimeout(() => {
+                if (valid()) { video.oncanplay = null; video.onerror = null; }
+            }, 12000);
+            timers.push(failTimer);
+        }, delayMs || 0);
+        timers.push(t);
+    }
+
+    // ── Globaler Timeout: nach 30s alles aufgeben ────────
+    const globalFail = setTimeout(() => { if (!won) allFailed(); }, 30000);
+    timers.push(globalFail);
+
+    // ── Strategie je nach URL-Typ ────────────────────────
+
+    if (isM3U8 || isWorker) {
+        tryHLS(url, 0);
+        tryNative(url, 13500);
+
+    } else if (isStalker || isExtTS) {
+        tryTS(url, 0);
+        tryHLS(url, 3000); // Entzerrt, damit sie sich nicht stören
+        tryNative(url, 16000);
+
+    } else if (isXtream) {
+        // FIX: Xtream Links nicht mehr alle gleichzeitig starten!
+        // Startet zuerst TS. Wenn TS nach 4,5 Sekunden wegen HEVC-Sperre abstürzt, springt Native ein.
+        tryTS(url, 0);
+        tryNative(url, 5000); 
+
+    } else {
+        tryHLS(url, 0);
+        tryTS(url, 3000);
+        tryNative(url, 16000);
+    }
+}
+
+// ── Komut Handler ────────────────────────────────────────
+function handleCommand(cmd) {
+    if (!cmd || cmd.startsWith('INDEX:')) return;
+    if (cmd.startsWith('SETLIST:')) {
+        const p = cmd.slice(8).split('~~~');
+        urlList      = p[0] ? p[0].split('||') : [];
+        nameList     = p[1] ? p[1].split('||') : [];
+        currentIndex = p[2] ? parseInt(p[2]) : 0;
+        if (urlList[currentIndex]) {
+            startStream(urlList[currentIndex]);
+            showChannelInfo(nameList[currentIndex] || '?', currentIndex);
+        }
+    } else if (cmd.startsWith('PLAY:')) {
+        startStream(cmd.slice(5));
+    } else if (cmd.includes('://')) {
+        startStream(cmd);
+    }
+}
+
+setInterval(() => {
+    try {
+        const cmd = window.AppInventor.getWebViewString();
+        if (cmd && cmd !== currentCmd) { currentCmd = cmd; handleCommand(cmd); }
+    } catch(e) {}
+}, 300);
+</script>
 </body>
 </html>
