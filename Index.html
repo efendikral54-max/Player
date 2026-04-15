@@ -72,6 +72,7 @@ function forcePlay() {
 }
 window.addEventListener('click', forcePlay);
 
+// ── STOP ALL ──
 function stopAll() {
     activePlayer = null;
     if (window._hlsInst) { try { window._hlsInst.destroy(); } catch(e){} window._hlsInst = null; }
@@ -79,7 +80,7 @@ function stopAll() {
     video.src = ''; video.load();
 }
 
-// 🔥 FIX: User-Agent eingebaut
+// ── HLS ──
 function tryHLS(tryUrl, delayMs) {
     setTimeout(() => {
         if (!Hls.isSupported()) return;
@@ -106,6 +107,7 @@ function tryHLS(tryUrl, delayMs) {
     }, delayMs || 0);
 }
 
+// ── TS ──
 function tryTS(url, delayMs) {
     setTimeout(() => {
         if (!mpegts.getFeatureList().mseLivePlayback) return;
@@ -113,15 +115,10 @@ function tryTS(url, delayMs) {
         window._tsInst = p;
         p.attachMediaElement(video);
         p.load();
-        setTimeout(() => {
-            if (video.readyState >= 2) {
-                video.play().catch(()=>{});
-                spinner.style.display = 'none';
-            }
-        }, 2000);
     }, delayMs || 0);
 }
 
+// ── Native ──
 function tryNative(url, delayMs) {
     setTimeout(() => {
         video.src = url;
@@ -132,17 +129,20 @@ function tryNative(url, delayMs) {
     }, delayMs || 0);
 }
 
+// ── START ──
 function startStream(url) {
     if (!url) return;
+
     stopAll();
     spinner.style.display = 'block';
 
     const lo = url.toLowerCase();
-    const isXtream  = /:\d{4,5}\/[^/]+\/[^/]+\/\d+$/.test(url);
+    const isM3U8    = lo.includes('.m3u8');
+    const isXtream  = !isM3U8 && /:\d{4,5}\/[^/]+\/[^/]+\/\d+$/.test(url);
 
     if (isXtream) {
 
-        // 🔥 XTREAM FIX
+        // 🔥 FIX: HLS FIRST
         tryHLS(url + '.m3u8', 0);
         tryHLS(url + '/index.m3u8', 500);
         tryHLS(url, 1000);
