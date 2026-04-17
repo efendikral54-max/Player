@@ -3,21 +3,22 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Universal IPTV Player</title>
+    <title>Ultimate IPTV Player</title>
     <script src="https://cdn.jsdelivr.net/npm/hls.js@latest"></script>
     <script src="https://cdn.jsdelivr.net/npm/mpegts.js@latest/dist/mpegts.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/dashjs@latest/dist/dash.all.min.js"></script>
+    
     <style>
         body, html { margin:0; padding:0; width:100%; height:100%; background:#000; overflow:hidden; display:flex; justify-content:center; align-items:center; }
         video { position:absolute; width:100%; height:100%; object-fit:contain; z-index:1; }
-        #spinner { position:fixed; top:50%; left:50%; transform:translate(-50%,-50%); z-index:300; width:60px; height:60px; border:5px solid rgba(255,255,255,0.2); border-top:5px solid #e50914; border-radius:50%; display:none; animation:spin 0.8s linear infinite; }
+        #spinner { position:fixed; top:50%; left:50%; transform:translate(-50%,-50%); z-index:300; width:60px; height:60px; border:5px solid rgba(255,255,255,0.2); border-top:5px solid #00ccff; border-radius:50%; display:none; animation:spin 0.8s linear infinite; }
         @keyframes spin { to { transform:translate(-50%,-50%) rotate(360deg); } }
-        #msg { position:relative; z-index:100; color:white; font-family:sans-serif; font-size:22px; font-weight:bold; text-align:center; background:rgba(0,0,0,0.7); padding:25px; border-radius:15px; border:2px solid rgba(255,255,255,0.2); display:none; }
+        #msg { position:relative; z-index:100; color:white; font-family:sans-serif; font-size:22px; font-weight:bold; text-align:center; background:rgba(0,0,0,0.7); padding:25px; border-radius:15px; border:2px solid rgba(255,255,255,0.2); display:none;}
         #channelInfo { position:fixed; bottom:30px; left:50%; transform:translateX(-50%); z-index:200; color:white; font-family:sans-serif; font-size:20px; font-weight:bold; background:rgba(0,0,0,0.75); padding:10px 24px; border-radius:10px; border:2px solid rgba(255,255,255,0.15); display:none; transition:opacity 0.5s; }
         #streamStatus { position:fixed; top:10px; left:10px; z-index:300; font-family:sans-serif; font-size:13px; font-weight:bold; padding:7px 13px; border-radius:8px; display:none; }
         #streamStatus.yukleniyor { background:rgba(0,0,0,0.75); color:#ffcc00; border:1px solid #ffcc00; }
         #streamStatus.basarili   { background:rgba(0,80,0,0.8);  color:#00ff00; border:1px solid #00ff00; }
         #streamStatus.hata       { background:rgba(80,0,0,0.8);  color:#ff4444; border:1px solid #ff4444; }
-        #debugLog { position:fixed; bottom:5px; right:5px; font-size:10px; color:rgba(255,255,255,0.4); z-index:500; font-family:monospace; }
     </style>
 </head>
 <body>
@@ -26,7 +27,6 @@
 <div id="msg"></div>
 <div id="channelInfo"></div>
 <div id="streamStatus"></div>
-<div id="debugLog"></div>
 
 <script>
 const video       = document.getElementById('video');
@@ -34,117 +34,117 @@ const spinner     = document.getElementById('spinner');
 const msg         = document.getElementById('msg');
 const channelInfo = document.getElementById('channelInfo');
 const streamStatus= document.getElementById('streamStatus');
-const debugLog    = document.getElementById('debugLog');
 
-let hasInteracted = false;
 let currentCmd = '';
 let urlList = [], nameList = [], currentIndex = 0;
-let infoTimer = null, statusTimer = null, zappingTimer = null;
-let activeUrl = '';
 let attemptId = 0;
+let activePlayer = null; // Speichert die aktive Player-Instanz ('hls', 'ts', 'dash')
 
-function log(m) { debugLog.innerText = m; console.log(m); }
-
-function showStatus(text, type, dur) {
-    if (statusTimer) clearTimeout(statusTimer);
-    streamStatus.textContent=text; streamStatus.className=type;
-    streamStatus.style.display='block'; streamStatus.style.opacity='1';
-    statusTimer = setTimeout(() => {
-        streamStatus.style.opacity='0';
-        setTimeout(()=>streamStatus.style.display='none',800);
-    }, dur||5000);
+function showStatus(text, type) {
+    streamStatus.textContent = text; 
+    streamStatus.className = type;
+    streamStatus.style.display = 'block';
+    if(type !== 'yukleniyor') setTimeout(() => streamStatus.style.display = 'none', 4000);
 }
 
 function showChannelInfo(name, index) {
-    channelInfo.textContent=(index+1)+'. '+name;
-    channelInfo.style.display='block'; channelInfo.style.opacity='1';
-    if (infoTimer) clearTimeout(infoTimer);
-    infoTimer = setTimeout(()=>{ channelInfo.style.opacity='0'; setTimeout(()=>channelInfo.style.display='none',500); },3000);
+    channelInfo.textContent = (index + 1) + '. ' + name;
+    channelInfo.style.display = 'block';
+    setTimeout(() => channelInfo.style.display = 'none', 3000);
 }
 
 function stopAll() {
-    if (window._hls){ try{window._hls.destroy();}catch(e){} window._hls=null; }
-    if (window._ts) { try{window._ts.unload();window._ts.detachMediaElement();window._ts.destroy();}catch(e){} window._ts=null; }
-    video.oncanplay=null; video.onerror=null;
-    video.src=''; video.load();
+    // Alle Player sauber beenden, bevor ein neuer startet
+    if (window._hls) { window._hls.destroy(); window._hls = null; }
+    if (window._ts) { window._ts.unload(); window._ts.detachMediaElement(); window._ts.destroy(); window._ts = null; }
+    if (window._dash) { window._dash.reset(); window._dash = null; }
+    video.src = '';
+    video.removeAttribute('src');
+    video.load();
 }
 
-function applyAudio() {
-    if (hasInteracted){ video.muted=false; video.volume=1.0; video.play().catch(()=>{}); msg.style.display='none'; }
-    else { video.play().catch(()=>{}); msg.innerHTML='Ses için OK tuşuna bas'; msg.style.display='block'; }
+// ------------------- DIE PLAYER LOGIK -------------------
+
+function playHLS(url, fallback) {
+    if (!Hls.isSupported()) return fallback();
+    const hls = new Hls({ maxBufferLength: 30, autoStartLoad: true });
+    window._hls = hls;
+    hls.loadSource(url);
+    hls.attachMedia(video);
+    
+    hls.on(Hls.Events.MANIFEST_PARSED, () => success('HLS'));
+    hls.on(Hls.Events.ERROR, (event, data) => { if (data.fatal) fallback(); });
 }
 
-// Player 1: HLS.js
-function doHLS(url, onSuccess, onFail) {
-    if (!Hls.isSupported()) { onFail(); return; }
-    log("HLS.js Start...");
-    const h = new Hls({ startLevel: -1, autoStartLoad: true });
-    window._hls = h; h.loadSource(url); h.attachMedia(video);
-    let won = false;
-    h.on(Hls.Events.MANIFEST_PARSED, () => { if(!won){won=true; onSuccess();} });
-    h.on(Hls.Events.ERROR, (e, d) => { if(d.fatal && !won){won=true; h.destroy(); onFail();} });
-    setTimeout(()=>{ if(!won){h.destroy(); onFail();} }, 12000);
+function playTS(url, fallback) {
+    if (!mpegts.getFeatureList().mseLivePlayback) return fallback();
+    const ts = mpegts.createPlayer({ type: 'mse', isLive: true, url: url });
+    window._ts = ts;
+    ts.attachMediaElement(video);
+    ts.load();
+    
+    // Prüfe schnell ob Video läuft
+    let check = setInterval(() => {
+        if (video.readyState >= 2) { clearInterval(check); success('TS'); }
+    }, 300);
+    setTimeout(() => { clearInterval(check); if(video.readyState < 2) fallback(); }, 6000);
+    
+    ts.on(mpegts.Events.ERROR, fallback);
 }
 
-// Player 2: mpegts.js (Wichtig für 4kblue8k)
-function doTS(url, onSuccess, onFail) {
-    if (!mpegts.getFeatureList().mseLivePlayback) { onFail(); return; }
-    log("MPEG-TS Start...");
-    const p = mpegts.createPlayer({ type:'mse', isLive:true, url:url });
-    window._ts=p; p.attachMediaElement(video); p.load();
-    let won = false;
-    const check = setInterval(() => {
-        if (video.readyState >= 2 || video.buffered.length > 0) { 
-            clearInterval(check); if(!won){won=true; onSuccess();} 
-        }
-    }, 500);
-    setTimeout(()=>{ clearInterval(check); if(!won){p.destroy(); onFail();} }, 10000);
+function playDASH(url, fallback) {
+    const dash = dashjs.MediaPlayer().create();
+    window._dash = dash;
+    dash.initialize(video, url, true);
+    dash.on(dashjs.MediaPlayer.events.PLAYBACK_STARTED, () => success('DASH'));
+    dash.on(dashjs.MediaPlayer.events.ERROR, fallback);
 }
 
-// Player 3: Native Fallback
-function doNative(url, onSuccess, onFail) {
-    log("Native Start...");
-    video.src=url; video.load();
-    video.oncanplay = ()=>{ video.oncanplay=null; onSuccess(); };
-    video.onerror = ()=>{ onFail(); };
-    setTimeout(()=>{ if(video.readyState < 2) onFail(); }, 10000);
+function playNative(url) {
+    video.src = url;
+    video.play().then(() => success('Native')).catch(() => {
+        spinner.style.display = 'none';
+        showStatus('❌ Yayın açılamadı', 'hata');
+    });
 }
+
+function success(playerName) {
+    spinner.style.display = 'none';
+    showStatus('✅ ' + playerName + ' aktif', 'basarili');
+    video.muted = false;
+    video.play().catch(() => { msg.innerText="Klicken für Ton"; msg.style.display='block'; });
+}
+
+// ------------------- ROUTING FUNKTION -------------------
 
 function startStream(url) {
     if (!url) return;
-    const id = ++attemptId;
-    activeUrl = url;
     stopAll();
-    spinner.style.display='block';
-    showStatus('⏳ Yükleniyor...','yukleniyor',30000);
+    spinner.style.display = 'block';
+    msg.style.display = 'none';
+    showStatus('⏳ Yükleniyor...', 'yukleniyor');
+    
+    const urlLower = url.toLowerCase();
 
-    const lo = url.toLowerCase();
-    const isTS = lo.includes('.ts') || /:\d+\/.*\/.*\/\d+$/.test(url);
-
-    const checkId = (fn) => { return (...args) => { if(id === attemptId) fn(...args); }; };
-
-    if (isTS) {
-        doTS(url, checkId(()=>win('TS')), () => {
-            doHLS(url, checkId(()=>win('HLS')), () => {
-                doNative(url, checkId(()=>win('Native')), checkId(lose));
-            });
-        });
-    } else {
-        doHLS(url, checkId(()=>win('HLS')), () => {
-            doTS(url, checkId(()=>win('TS')), () => {
-                doNative(url, checkId(()=>win('Native')), checkId(lose));
-            });
-        });
+    // 1. Logik: Welcher Stream ist es? Wir nehmen den schnellsten Player für das jeweilige Format!
+    if (urlLower.includes('.mpd')) {
+        // Dash Streams
+        playDASH(url, () => playNative(url));
+    } 
+    else if (urlLower.includes('.ts') || /:\d+\/.*\/.*\/\d+$/.test(url)) {
+        // Xtream Codes (die 4kblue8k Links)
+        playTS(url, () => playHLS(url, () => playNative(url)));
+    } 
+    else {
+        // Standard (M3U8 / Tulix / Proxy)
+        playHLS(url, () => playTS(url, () => playNative(url)));
     }
-
-    function win(m) { spinner.style.display='none'; showStatus('✅ '+m,'basarili',4000); applyAudio(); log(m + " active"); }
-    function lose() { spinner.style.display='none'; showStatus('❌ Hata','hata',8000); log("All players failed"); }
 }
 
-// KOMMUNIKATION MIT APP INVENTOR (Wiederhergestellt)
+// ------------------- APP INVENTOR -------------------
+
 function handleCommand(cmd) {
-    if (!cmd) return;
-    log("Command: " + cmd.substring(0,20));
+    if (!cmd || cmd.startsWith('INDEX:')) return;
     if (cmd.startsWith('SETLIST:')) {
         const p = cmd.slice(8).split('~~~');
         urlList = p[0] ? p[0].split('||') : [];
@@ -154,37 +154,19 @@ function handleCommand(cmd) {
             startStream(urlList[currentIndex]);
             showChannelInfo(nameList[currentIndex]||'?', currentIndex);
         }
-    } else if (cmd.startsWith('PLAY:')) {
-        startStream(cmd.slice(5));
     } else if (cmd.includes('://')) {
         startStream(cmd);
     }
 }
 
-window.addEventListener('click', () => { hasInteracted=true; video.muted=false; video.play().catch(()=>{}); msg.style.display='none'; });
+setInterval(() => {
+    try {
+        const cmd = window.AppInventor.getWebViewString();
+        if(cmd && cmd !== currentCmd){ currentCmd = cmd; handleCommand(cmd); }
+    } catch(e) {}
+}, 300);
 
-window.addEventListener('keydown', e => {
-    if (!hasInteracted) hasInteracted=true;
-    if (e.keyCode===40||e.keyCode===229){ currentIndex=(currentIndex+1)%urlList.length; doZap(); }
-    else if (e.keyCode===38||e.keyCode===228){ currentIndex=(currentIndex-1+urlList.length)%urlList.length; doZap(); }
-});
-
-function doZap() {
-    showChannelInfo(nameList[currentIndex]||'?', currentIndex);
-    try { window.AppInventor.setWebViewString('INDEX:'+currentIndex); } catch(e){}
-    if (zappingTimer) clearTimeout(zappingTimer);
-    zappingTimer = setTimeout(()=>startStream(urlList[currentIndex]),100);
-}
-
-setInterval(()=>{
-    try{
-        const cmd=window.AppInventor.getWebViewString();
-        if(cmd && cmd !== currentCmd){
-            currentCmd=cmd;
-            handleCommand(cmd);
-        }
-    }catch(e){}
-},300);
+window.onclick = () => { video.muted = false; video.play(); msg.style.display = 'none'; };
 </script>
 </body>
 </html>
