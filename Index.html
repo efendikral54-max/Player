@@ -3,157 +3,202 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Universal IPTV Player Pro</title>
+    <title>Universal IPTV Player</title>
     <script src="https://cdn.jsdelivr.net/npm/hls.js@latest"></script>
     <script src="https://cdn.jsdelivr.net/npm/mpegts.js@latest/dist/mpegts.min.js"></script>
     <style>
         body, html { margin:0; padding:0; width:100%; height:100%; background:#000; overflow:hidden; display:flex; justify-content:center; align-items:center; }
-        video { position:absolute; width:100%; height:100%; object-fit:contain; z-index:1; background:#000; }
-        #spinner { position:fixed; top:50%; left:50%; transform:translate(-50%,-50%); z-index:300; width:50px; height:50px; border:5px solid rgba(255,255,255,0.1); border-top:5px solid #00ccff; border-radius:50%; display:none; animation:spin 1s linear infinite; }
+        video { position:absolute; width:100%; height:100%; object-fit:contain; z-index:1; }
+        #spinner { position:fixed; top:50%; left:50%; transform:translate(-50%,-50%); z-index:300; width:60px; height:60px; border:5px solid rgba(255,255,255,0.2); border-top:5px solid #e50914; border-radius:50%; display:none; animation:spin 0.8s linear infinite; }
         @keyframes spin { to { transform:translate(-50%,-50%) rotate(360deg); } }
-        #msg { position:relative; z-index:100; color:white; font-family:sans-serif; font-size:18px; text-align:center; background:rgba(0,0,0,0.8); padding:20px; border-radius:10px; display:none; border:1px solid #444; }
-        #channelInfo { position:fixed; bottom:20px; left:50%; transform:translateX(-50%); z-index:200; color:white; font-family:sans-serif; font-size:18px; background:rgba(0,0,0,0.8); padding:8px 20px; border-radius:5px; display:none; }
-        #streamStatus { position:fixed; top:10px; left:10px; z-index:300; font-family:monospace; font-size:11px; color:#aaa; padding:5px; background:rgba(0,0,0,0.5); pointer-events:none; }
+        #msg { position:relative; z-index:100; color:white; font-family:sans-serif; font-size:22px; font-weight:bold; text-align:center; background:rgba(0,0,0,0.7); padding:25px; border-radius:15px; border:2px solid rgba(255,255,255,0.2); }
+        #channelInfo { position:fixed; bottom:30px; left:50%; transform:translateX(-50%); z-index:200; color:white; font-family:sans-serif; font-size:20px; font-weight:bold; background:rgba(0,0,0,0.75); padding:10px 24px; border-radius:10px; border:2px solid rgba(255,255,255,0.15); display:none; transition:opacity 0.5s; }
+        #streamStatus { position:fixed; top:10px; left:10px; z-index:300; font-family:sans-serif; font-size:13px; font-weight:bold; padding:7px 13px; border-radius:8px; display:none; transition:opacity 0.8s; }
+        #streamStatus.yukleniyor { background:rgba(0,0,0,0.75); color:#ffcc00; border:1px solid #ffcc00; }
+        #streamStatus.basarili   { background:rgba(0,80,0,0.8);  color:#00ff00; border:1px solid #00ff00; }
+        #streamStatus.hata       { background:rgba(80,0,0,0.8);  color:#ff4444; border:1px solid #ff4444; }
     </style>
 </head>
 <body>
-
-<video id="video" playsinline autoplay></video>
+<video id="video" playsinline autoplay muted></video>
 <div id="spinner"></div>
-<div id="msg"></div>
+<div id="msg" style="display:none;"></div>
 <div id="channelInfo"></div>
-<div id="streamStatus">Bereit</div>
+<div id="streamStatus"></div>
 
 <script>
-const video = document.getElementById('video');
-const spinner = document.getElementById('spinner');
-const msg = document.getElementById('msg');
-const statusText = document.getElementById('streamStatus');
+const video       = document.getElementById('video');
+const spinner     = document.getElementById('spinner');
+const msg         = document.getElementById('msg');
 const channelInfo = document.getElementById('channelInfo');
+const streamStatus= document.getElementById('streamStatus');
 
-let currentUrl = '';
+let hasInteracted = false;
+let currentCmd = '';
+let urlList = [], nameList = [], currentIndex = 0;
+let infoTimer = null, statusTimer = null, zappingTimer = null;
+let activeUrl = '';
 let attemptId = 0;
-let hlsInstance = null;
-let tsInstance = null;
 
-// Hilfsfunktion: Status anzeigen
-function setStatus(txt) { statusText.textContent = txt; console.log(txt); }
+function showStatus(text, type, dur) {
+    if (statusTimer) clearTimeout(statusTimer);
+    streamStatus.textContent=text; streamStatus.className=type;
+    streamStatus.style.display='block'; streamStatus.style.opacity='1';
+    statusTimer = setTimeout(() => {
+        streamStatus.style.opacity='0';
+        setTimeout(()=>streamStatus.style.display='none',800);
+    }, dur||5000);
+}
 
-function stopPlayers() {
-    if (hlsInstance) { hlsInstance.destroy(); hlsInstance = null; }
-    if (tsInstance) { tsInstance.unload(); tsInstance.detachMediaElement(); tsInstance.destroy(); tsInstance = null; }
-    video.pause();
-    video.src = "";
-    video.load();
+function showChannelInfo(name, index) {
+    channelInfo.textContent=(index+1)+'. '+name;
+    channelInfo.style.display='block'; channelInfo.style.opacity='1';
+    if (infoTimer) clearTimeout(infoTimer);
+    infoTimer = setTimeout(()=>{ channelInfo.style.opacity='0'; setTimeout(()=>channelInfo.style.display='none',500); },3000);
+}
+
+function forcePlay() {
+    hasInteracted=true; video.muted=false; video.volume=1.0;
+    video.play().catch(()=>{}); msg.style.display='none';
+}
+
+window.addEventListener('click', forcePlay);
+window.addEventListener('keydown', e => {
+    if (!hasInteracted) forcePlay();
+    if (!urlList.length) return;
+    if (e.keyCode===40||e.keyCode===229){ currentIndex=(currentIndex+1)%urlList.length; doZap(); }
+    else if (e.keyCode===38||e.keyCode===228){ currentIndex=(currentIndex-1+urlList.length)%urlList.length; doZap(); }
+});
+
+function doZap() {
+    showChannelInfo(nameList[currentIndex]||'?', currentIndex);
+    try { window.AppInventor.setWebViewString('INDEX:'+currentIndex); } catch(e){}
+    if (zappingTimer) clearTimeout(zappingTimer);
+    zappingTimer = setTimeout(()=>startStream(urlList[currentIndex]),100);
+}
+
+function stopAll() {
+    if (window._hls){ try{window._hls.destroy();}catch(e){} window._hls=null; }
+    if (window._ts) { try{window._ts.unload();window._ts.detachMediaElement();window._ts.destroy();}catch(e){} window._ts=null; }
+    video.oncanplay=null; video.onerror=null;
+    video.src=''; video.load();
+}
+
+function applyAudio() {
+    if (hasInteracted){ video.muted=false; video.volume=1.0; video.play().catch(()=>{}); msg.style.display='none'; }
+    else { video.play().catch(()=>{}); msg.innerHTML='Ses için OK tuşuna bas'; msg.style.display='block'; }
+}
+
+// HLS Player
+function doHLS(url, onSuccess, onFail) {
+    if (!Hls.isSupported()) { onFail(); return; }
+    const h = new Hls({
+        startLevel: -1,
+        autoStartLoad: true,
+        maxBufferLength: 30,
+        xhrSetup: xhr => { xhr.withCredentials = false; }
+    });
+    window._hls = h;
+    h.loadSource(url); h.attachMedia(video);
+    let won = false;
+
+    const timer = setTimeout(() => {
+        if (!won){ if(window._hls===h){try{h.destroy();}catch(e){} window._hls=null;} onFail(); }
+    }, 12000);
+
+    h.on(Hls.Events.MANIFEST_PARSED, () => {
+        if (won) return; won = true; clearTimeout(timer); onSuccess();
+    });
+
+    h.on(Hls.Events.ERROR, (e, d) => {
+        if (d.fatal && !won) { won = true; clearTimeout(timer); if(window._hls===h){try{h.destroy();}catch(e){} window._hls=null;} onFail(); }
+    });
+}
+
+// MPEG-TS Player (Für die 4kblue8k Links)
+function doTS(url, onSuccess, onFail) {
+    if (!mpegts.getFeatureList().mseLivePlayback) { onFail(); return; }
+    const p = mpegts.createPlayer({ type:'mse', isLive:true, url });
+    window._ts=p;
+    p.attachMediaElement(video); p.load();
+    let won = false;
+
+    const checker = setInterval(() => {
+        if (video.readyState >= 2 || (video.buffered.length > 0 && video.buffered.end(0) > 0.1)) {
+            if (won) return; won=true; clearInterval(checker); clearTimeout(failTimer); onSuccess();
+        }
+    }, 400);
+
+    const failTimer = setTimeout(() => {
+        if (won) return; won=true; clearInterval(checker);
+        try{p.destroy();}catch(e){} onFail();
+    }, 10000);
+
+    p.on(mpegts.Events.ERROR, () => { if(!won){won=true; clearInterval(checker); onFail();} });
+}
+
+function doNative(url, onSuccess, onFail) {
+    video.src=url; video.load();
+    const t = setTimeout(()=>{ video.oncanplay=null; video.onerror=null; onFail(); },10000);
+    video.oncanplay = ()=>{ clearTimeout(t); onSuccess(); };
+    video.onerror   = ()=>{ clearTimeout(t); onFail(); };
 }
 
 function startStream(url) {
     if (!url) return;
-    stopPlayers();
-    currentUrl = url;
-    attemptId++;
-    const thisAttempt = attemptId;
-    
-    spinner.style.display = 'block';
-    msg.style.display = 'none';
-    setStatus("Versuche: " + url.split('/')[2]);
+    const id = ++attemptId;
+    activeUrl = url;
+    stopAll();
+    spinner.style.display='block';
+    showStatus('⏳ Yükleniyor...','yukleniyor',15000);
 
-    const isHLS = url.includes('.m3u8') || url.includes('proxy.php');
+    function valid() { return id===attemptId; }
+    function win(m)  { if(valid()){ spinner.style.display='none'; showStatus('✅ '+m,'basarili',4000); applyAudio(); } }
+    function lose()  { if(valid()){ spinner.style.display='none'; showStatus('❌ Yayın açılamadı','hata',8000); } }
+
+    const lo = url.toLowerCase();
     
+    // VERBESSERTE ERKENNUNG
+    const isHLS = lo.includes('.m3u8') || lo.includes('mode=proxy');
+    // Die 4kblue8k Links enden oft auf Nummern ohne Endung -> Das ist fast immer TS
+    const isTS = lo.includes('.ts') || /:\d+\/.*\/.*\/\d+$/.test(url) || lo.includes('extension=ts');
+
     if (isHLS) {
-        tryHLS(url, thisAttempt);
+        doHLS(url, ()=>win('HLS'), () => doNative(url, ()=>win('Native'), lose));
+    } else if (isTS) {
+        doTS(url, ()=>win('TS'), () => doHLS(url, ()=>win('HLS Fallback'), lose));
     } else {
-        tryTS(url, thisAttempt);
+        // Unbekannt: Probiere erst HLS, dann TS, dann Native
+        doHLS(url, ()=>win('HLS'), () => {
+            doTS(url, ()=>win('TS'), () => {
+                doNative(url, ()=>win('Native'), lose);
+            });
+        });
     }
 }
 
-function tryHLS(url, id) {
-    if (!Hls.isSupported()) { tryNative(url, id); return; }
-    
-    hlsInstance = new Hls({ enableWorker: true, lowLatencyMode: true });
-    hlsInstance.loadSource(url);
-    hlsInstance.attachMedia(video);
-    
-    hlsInstance.on(Hls.Events.MANIFEST_PARSED, () => {
-        if (id !== attemptId) return;
-        video.play().catch(e => {
-            msg.innerHTML = "Klicken für Ton";
-            msg.style.display = 'block';
-        });
-        spinner.style.display = 'none';
-        setStatus("HLS aktiv");
-    });
+// App Inventor Kommunikation
+setInterval(()=>{
+    try{
+        const cmd=window.AppInventor.getWebViewString();
+        if(cmd&&cmd!==currentCmd){currentCmd=cmd;handleCommand(cmd);}
+    }catch(e){}
+},300);
 
-    hlsInstance.on(Hls.Events.ERROR, (e, data) => {
-        if (data.fatal) tryNative(url, id);
-    });
+function handleCommand(cmd) {
+    if (!cmd||cmd.startsWith('INDEX:')) return;
+    if (cmd.startsWith('SETLIST:')) {
+        const p=cmd.slice(8).split('~~~');
+        urlList=p[0]?p[0].split('||'):[];
+        nameList=p[1]?p[1].split('||'):[];
+        currentIndex=p[2]?parseInt(p[2]):0;
+        if (urlList[currentIndex]) startStream(urlList[currentIndex]);
+    } else if (cmd.startsWith('PLAY:')) {
+        startStream(cmd.slice(5));
+    } else if (cmd.includes('://')) {
+        startStream(cmd);
+    }
 }
-
-function tryTS(url, id) {
-    if (!mpegts.getFeatureList().mseLivePlayback) { tryNative(url, id); return; }
-    
-    tsInstance = mpegts.createPlayer({
-        type: 'mse',
-        isLive: true,
-        url: url
-    }, {
-        enableStashBuffer: false,
-        liveBufferLatencyChasing: true
-    });
-    
-    tsInstance.attachMediaElement(video);
-    tsInstance.load();
-    
-    // Check für Bilddaten
-    let checkVideo = setInterval(() => {
-        if (id !== attemptId) { clearInterval(checkVideo); return; }
-        if (video.readyState >= 2) {
-            video.play();
-            spinner.style.display = 'none';
-            setStatus("TS aktiv (Codec: " + (video.videoWidth > 0 ? "OK" : "Nur Ton?") + ")");
-            clearInterval(checkVideo);
-        }
-    }, 500);
-
-    tsInstance.on(mpegts.Events.ERROR, () => tryNative(url, id));
-    
-    // Timeout Fallback
-    setTimeout(() => {
-        if (id === attemptId && video.readyState < 2) tryNative(url, id);
-    }, 8000);
-}
-
-function tryNative(url, id) {
-    if (id !== attemptId) return;
-    setStatus("Native Fallback...");
-    video.src = url;
-    video.play().then(() => {
-        spinner.style.display = 'none';
-    }).catch(() => {
-        if (id === attemptId) {
-            spinner.style.display = 'none';
-            setStatus("Fehler: Stream nicht abspielbar");
-        }
-    });
-}
-
-// App Inventor Schnittstelle
-setInterval(() => {
-    try {
-        let cmd = window.AppInventor.getWebViewString();
-        if (cmd && cmd !== "") {
-            window.AppInventor.setWebViewString(""); // Reset
-            if (cmd.includes("://")) startStream(cmd);
-        }
-    } catch(e) {}
-}, 500);
-
-// User Interaktion für Autoplay-Blockade
-window.addEventListener('click', () => {
-    video.muted = false;
-    video.play();
-    msg.style.display = 'none';
-});
 </script>
 </body>
 </html>
