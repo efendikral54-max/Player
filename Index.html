@@ -86,174 +86,115 @@ function applyAudio() {
 }
 
 // ════════════════════════════════════════════════════════
-//  doHLS — startet HLS.js, meldet Erfolg bei MANIFEST_PARSED
-//  Reconnect bei Fatal-Error nach Gewinn
-// ════════════════════════════════════════════════════════
 function doHLS(url, onSuccess, onFail) {
     if (!Hls.isSupported()) { onFail(); return; }
     const h = new Hls({
-        startLevel: -1,
-        autoStartLoad: true,
-        maxBufferLength: 30,
-        manifestLoadingTimeOut: 12000,
+        startLevel: -1, autoStartLoad: true, maxBufferLength: 30,
+        manifestLoadingTimeOut: 8000, // Schnellerer Fallback!
         manifestLoadingMaxRetry: 1,
-        manifestLoadingRetryDelay: 2000,
-        levelLoadingTimeOut: 10000,
-        fragLoadingTimeOut: 20000,
-        enableWorker: true,
-        xhrSetup: xhr => { xhr.withCredentials = false; }
+        enableWorker: true, xhrSetup: xhr => { xhr.withCredentials = false; }
     });
     window._hls = h;
     h.loadSource(url); h.attachMedia(video);
     let won = false;
 
+    // Timeout von 16s auf 8s reduziert!
     const timer = setTimeout(() => {
         if (!won){ if(window._hls===h){try{h.destroy();}catch(e){} window._hls=null;} onFail(); }
-    }, 16000);
+    }, 8000);
 
     h.on(Hls.Events.MANIFEST_PARSED, () => {
-        if (won) return;
-        won = true;
-        clearTimeout(timer);
-        // Erfolg — jetzt applyAudio und Reconnect einrichten
-        onSuccess();
-        // Fatal Error nach Gewinn → Reconnect (nicht onFail aufrufen)
+        if (won) return; won = true; clearTimeout(timer); onSuccess();
         h.off(Hls.Events.ERROR);
         h.on(Hls.Events.ERROR, (e, d) => {
             if (d.fatal && activeUrl === url) {
                 try{h.destroy();}catch(e){} window._hls = null;
-                setTimeout(() => {
-                    if (activeUrl === url) doHLS(url, ()=>{}, ()=>{});
-                }, 3000);
+                setTimeout(() => { if (activeUrl === url) doHLS(url, ()=>{}, ()=>{}); }, 3000);
             }
         });
     });
 
     h.on(Hls.Events.ERROR, (e, d) => {
-        if (d.fatal && !won) {
-            won = true;
-            clearTimeout(timer);
-            if(window._hls===h){try{h.destroy();}catch(e){} window._hls=null;}
-            onFail();
-        }
+        if (d.fatal && !won) { won = true; clearTimeout(timer); if(window._hls===h){try{h.destroy();}catch(e){} window._hls=null;} onFail(); }
     });
 }
 
-// ════════════════════════════════════════════════════════
-//  doTS — startet mpegts.js
-//  Erfolg wenn: readyState >= 2 ODER buffered > 0
-//  Kein Erfolg nach timeout → onFail
 // ════════════════════════════════════════════════════════
 function doTS(url, onSuccess, onFail, maxWait) {
     if (!mpegts.getFeatureList().mseLivePlayback) { onFail(); return; }
-    const p = mpegts.createPlayer({
-        type:'mse', isLive:true, url,
-        config:{ enableWorker:true, enableStashBuffer:false, stashInitialSize:128 }
-    });
-    window._ts=p;
-    p.attachMediaElement(video); p.load();
+    const p = mpegts.createPlayer({ type:'mse', isLive:true, url, config:{ enableWorker:true, enableStashBuffer:false, stashInitialSize:128 } });
+    window._ts=p; p.attachMediaElement(video); p.load();
     let won = false;
 
-    function succeed() {
-        if (won) return; won=true;
-        clearTimeout(failTimer); clearInterval(checker);
-        onSuccess();
-    }
-    function failNow() {
-        if (won) return; won=true;
-        clearTimeout(failTimer); clearInterval(checker);
-        try{p.unload();p.detachMediaElement();p.destroy();}catch(e){}
-        if (window._ts===p) window._ts=null;
-        onFail();
-    }
+    function succeed() { if (won) return; won=true; clearTimeout(failTimer); clearInterval(checker); onSuccess(); }
+    function failNow() { if (won) return; won=true; clearTimeout(failTimer); clearInterval(checker); try{p.unload();p.detachMediaElement();p.destroy();}catch(e){} if (window._ts===p) window._ts=null; onFail(); }
 
-    // Polling: prüfe ob echte Videodaten ankommen
     const checker = setInterval(() => {
-        if (video.readyState >= 2) { succeed(); }
-        else if (video.buffered.length > 0 && video.buffered.end(0) > 0.5) { succeed(); }
+        if (video.readyState >= 2 || (video.buffered.length > 0 && video.buffered.end(0) > 0.5)) { succeed(); }
     }, 400);
 
     p.on(mpegts.Events.ERROR, failNow);
-    const failTimer = setTimeout(failNow, maxWait || 9000);
+    const failTimer = setTimeout(failNow, maxWait || 4500); // Schnellerer Fallback! (4.5s statt 9s)
 }
 
 // ════════════════════════════════════════════════════════
-//  doNative — letzter Ausweg
-// ════════════════════════════════════════════════════════
 function doNative(url, onSuccess, onFail) {
     video.src=url; video.load();
-    const t = setTimeout(()=>{ video.oncanplay=null; video.onerror=null; onFail(); },12000);
+    const t = setTimeout(()=>{ video.oncanplay=null; video.onerror=null; onFail(); }, 10000);
     video.oncanplay = ()=>{ clearTimeout(t); onSuccess(); };
     video.onerror   = ()=>{ clearTimeout(t); onFail(); };
 }
 
 // ════════════════════════════════════════════════════════
-//  HAUPT-FUNKTION
-// ════════════════════════════════════════════════════════
 function startStream(url) {
     if (!url) return;
     const id = ++attemptId;
-    activeUrl = url;
+    activeUrl = url.trim();
     stopAll();
     spinner.style.display='block';
     showStatus('⏳ Yükleniyor...','yukleniyor',30000);
 
-    const lo = url.toLowerCase();
+    const lo = activeUrl.toLowerCase();
+    
+    // URL TYPEN
     const isM3U8    = lo.includes('.m3u8');
-    const isWorker  = lo.includes('workers.dev')||lo.includes('.gif')||lo.includes('.txt')||lo.includes('.css');
     const isExtTS   = lo.endsWith('.ts')||lo.includes('extension=ts')||lo.includes('type=m3u_plus');
     const isStalker = lo.includes('live.php')&&lo.includes('mac=');
-    // Xtream: port/user/pass/numericID
-    const isXtream  = !isM3U8&&!isExtTS&&!isStalker&&
-                      /:\d{2,5}\/[^/?#]+\/[^/?#]+\/\d+$/.test(url);
+    const isXtream  = !isM3U8&&!isExtTS&&!isStalker&& /:\d{2,5}\/[^/?#]+\/[^/?#]+\/\d+$/.test(activeUrl);
+    
+    // CORS BLOCKER ERKENNUNG (Tulix, Proxies etc.)
+    const isCorsBlocked = lo.includes('tulix.tv') || lo.includes('proxy.php') || lo.includes('proxy');
 
     function valid() { return id===attemptId; }
     function win(m)  { if(valid()){ spinner.style.display='none'; showStatus('✅ '+m,'basarili',4000); applyAudio(); } }
-    function lose()  { if(valid()){ spinner.style.display='none'; showStatus('❌ Yayın açılamadı','hata',8000); } }
+    function lose()  { if(valid()){ spinner.style.display='none'; showStatus('❌ Yayın açılamadı veya Desteklenmiyor','hata',8000); } }
     function guard(fn){ return ()=>{ if(valid()) fn(); else stopAll(); }; }
 
-    if (isM3U8 || isWorker) {
-        // Klare HLS → HLS.js → Native
-        doHLS(url,
+    // AGGRESSIVES ROUTING
+    if (isCorsBlocked) {
+        // TULIX & PROXY: JavaScript sofort überspringen! Geht direkt ans Android System.
+        console.log("CORS-Blocker erkannt -> Nativer Bypass");
+        doNative(activeUrl, guard(()=>win('Native')), lose);
+
+    } else if (isXtream || isExtTS || isStalker) {
+        // XTREAM & TS: Versuche TS, aber brich nach 4.5s ab, wenn es hängt -> sofort Native!
+        console.log("TS/Xtream Stream -> Schneller Fallback");
+        doTS(activeUrl,
+            guard(()=>win('TS')),
+            guard(()=>doNative(activeUrl, guard(()=>win('Native')), guard(()=>doHLS(activeUrl, guard(()=>win('HLS')), lose)))),
+            4500 // Nur 4.5 Sekunden warten!
+        );
+
+    } else if (isM3U8) {
+        // HLS
+        doHLS(activeUrl,
             guard(()=>win('HLS')),
-            guard(()=>doNative(url, guard(()=>win('Native')), lose))
-        );
-
-    } else if (isExtTS || isStalker) {
-        // Explizit TS → TS → HLS → Native
-        doTS(url,
-            guard(()=>win('TS')),
-            guard(()=>doHLS(url,
-                guard(()=>win('HLS')),
-                guard(()=>doNative(url, guard(()=>win('Native')), lose))
-            )),
-            9000
-        );
-
-    } else if (isXtream) {
-        // Xtream ohne Extension:
-        // TS zuerst (H.264 + H.265 TS Streams)
-        // → HLS (Streams die HLS liefern)
-        // → Native
-        doTS(url,
-            guard(()=>win('TS')),
-            guard(()=>doHLS(url,
-                guard(()=>win('HLS')),
-                guard(()=>doNative(url, guard(()=>win('Native')), lose))
-            )),
-            9000
+            guard(()=>doNative(activeUrl, guard(()=>win('Native')), lose))
         );
 
     } else {
-        // Unbekannt → HLS → TS → Native
-        doHLS(url,
-            guard(()=>win('HLS')),
-            guard(()=>doTS(url,
-                guard(()=>win('TS')),
-                guard(()=>doNative(url, guard(()=>win('Native')), lose)),
-                9000
-            ))
-        );
+        // Fallback für Unbekanntes
+        doHLS(activeUrl, guard(()=>win('HLS')), guard(()=>doNative(activeUrl, guard(()=>win('Native')), lose)));
     }
 }
 
