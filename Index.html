@@ -1,33 +1,24 @@
 <!DOCTYPE html>
-<html lang="tr">
+<html lang="de">
 <head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>IPTV Player</title>
-
-<script src="https://cdn.jsdelivr.net/npm/hls.js@latest"></script>
-<script src="https://cdn.jsdelivr.net/npm/mpegts.js@latest/dist/mpegts.min.js"></script>
-
-<style>
-body,html{margin:0;padding:0;width:100%;height:100%;background:#000;overflow:hidden;display:flex;justify-content:center;align-items:center;}
-video{position:absolute;width:100%;height:100%;object-fit:contain;z-index:1;}
-#spinner{position:fixed;top:50%;left:50%;transform:translate(-50%,-50%);z-index:300;width:56px;height:56px;border:5px solid rgba(255,255,255,0.15);border-top:5px solid #e50914;border-radius:50%;display:none;animation:spin 0.8s linear infinite;}
-@keyframes spin{to{transform:translate(-50%,-50%) rotate(360deg);}}
-#msg{position:relative;z-index:100;color:#fff;font-family:sans-serif;font-size:20px;font-weight:bold;text-align:center;background:rgba(0,0,0,0.75);padding:22px;border-radius:14px;border:2px solid rgba(255,255,255,0.2);}
-#channelInfo{position:fixed;bottom:28px;left:50%;transform:translateX(-50%);z-index:200;color:#fff;font-family:sans-serif;font-size:19px;font-weight:bold;background:rgba(0,0,0,0.78);padding:9px 22px;border-radius:10px;border:2px solid rgba(255,255,255,0.15);display:none;}
-#st{position:fixed;top:10px;left:10px;z-index:300;font-family:sans-serif;font-size:12px;font-weight:bold;padding:6px 12px;border-radius:7px;display:none;}
-#st.ok{background:rgba(0,70,0,0.85);color:#00ff00;}
-#st.er{background:rgba(70,0,0,0.85);color:#ff4444;}
-#st.l{background:rgba(0,0,0,0.8);color:#ffcc00;}
-</style>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Ultimate Xtream Player</title>
+    <script src="https://cdn.jsdelivr.net/npm/hls.js@latest"></script>
+    <script src="https://cdn.jsdelivr.net/npm/mpegts.js@latest/dist/mpegts.min.js"></script>
+    <style>
+        body,html{margin:0;padding:0;width:100%;height:100%;background:#000;overflow:hidden;display:flex;justify-content:center;align-items:center;}
+        video{position:absolute;width:100%;height:100%;object-fit:contain;z-index:1;}
+        #spinner{position:fixed;top:50%;left:50%;transform:translate(-50%,-50%);z-index:300;width:60px;height:60px;border:6px solid rgba(255,255,255,0.1);border-top:6px solid #e50914;border-radius:50%;display:none;animation:spin 0.8s linear infinite;}
+        @keyframes spin{to{transform:translate(-50%,-50%) rotate(360deg);}}
+        #msg{position:relative;z-index:100;color:#fff;font-family:sans-serif;font-size:18px;text-align:center;background:rgba(0,0,0,0.8);padding:20px;border-radius:10px;display:none;}
+        #st{position:fixed;top:10px;left:10px;z-index:300;color:#00ff00;font-family:monospace;font-size:11px;background:rgba(0,0,0,0.5);padding:5px;display:none;}
+    </style>
 </head>
-
 <body>
-
 <video id="video" playsinline autoplay muted></video>
 <div id="spinner"></div>
 <div id="msg"></div>
-<div id="channelInfo"></div>
 <div id="st"></div>
 
 <script>
@@ -36,160 +27,123 @@ const spinner = document.getElementById('spinner');
 const msg = document.getElementById('msg');
 const st = document.getElementById('st');
 
-let attemptId = 0;
+let hls = null, ts = null, attemptId = 0, activeUrl = "";
+let urlList = [], nameList = [], currentIndex = 0, currentCmd = "";
 
-// 🔍 H.265 Detection
-async function detectCodec(url){
-    try{
-        const r = await fetch(url);
-        const t = await r.text();
-        if(t.includes('hev1')||t.includes('hvc1')) return 'h265';
-        if(t.includes('avc1')) return 'h264';
-        return 'unknown';
-    }catch(e){
-        return 'unknown';
-    }
+function log(m){ st.innerHTML=m; st.style.display="block"; console.log(m); }
+
+function stopPlayers() {
+    if(hls){ hls.destroy(); hls=null; }
+    if(ts){ ts.unload(); ts.detachMediaElement(); ts.destroy(); ts=null; }
+    video.pause(); video.removeAttribute('src'); video.load();
 }
 
-// UI
-function setStatus(text, cls){
-    st.innerText = text;
-    st.className = cls;
-    st.style.display='block';
-    setTimeout(()=>st.style.display='none',5000);
+// STRATEGIE 1: HLS (Der stabilste Modus für Web)
+function playHLS(url, callback) {
+    if(!Hls.isSupported()){ callback(); return; }
+    hls = new Hls({ enableWorker:true, lowLatencyMode:true, backBufferLength:30 });
+    hls.loadSource(url);
+    hls.attachMedia(video);
+    hls.on(Hls.Events.MANIFEST_PARSED, () => { video.play(); });
+    hls.on(Hls.Events.ERROR, (e,data) => { if(data.fatal) callback(); });
 }
 
-// STOP
-function stopAll(){
-    if(window._H){try{_H.destroy()}catch(e){}}
-    if(window._T){try{_T.destroy()}catch(e){}}
-    video.src='';
+// STRATEGIE 2: MPEG-TS (Für direkte Xtream-Links)
+function playTS(url, callback) {
+    if(!mpegts.getFeatureList().mseLivePlayback){ callback(); return; }
+    ts = mpegts.createPlayer({type:'mse', isLive:true, url}, {enableStashBuffer:false});
+    ts.attachMediaElement(video);
+    ts.load();
+    ts.play().catch(callback);
+    // Timeout falls TS hängen bleibt
+    setTimeout(() => { if(video.readyState < 2) callback(); }, 5000);
 }
 
-// HLS
-function tryHLS(url, ok, fail){
-    if(!Hls.isSupported()){fail();return;}
-    const h = new Hls();
-    window._H = h;
-    h.loadSource(url);
-    h.attachMedia(video);
-
-    h.on(Hls.Events.MANIFEST_PARSED, ()=>ok());
-    h.on(Hls.Events.ERROR, ()=>fail());
+// STRATEGIE 3: Native (Letzte Rettung)
+function playNative(url, callback) {
+    video.src = url;
+    video.play().then(() => log("Native Play")).catch(callback);
 }
 
-// TS
-function tryTS(url, ok, fail){
-    if(!mpegts.getFeatureList().mseLivePlayback){fail();return;}
-    const p = mpegts.createPlayer({type:'mse',url});
-    window._T = p;
-    p.attachMediaElement(video);
-    p.load();
-    setTimeout(ok,2000);
-}
-
-// Native
-function tryNative(url, ok, fail){
-    video.src=url;
-    video.oncanplay=ok;
-    video.onerror=fail;
-}
-
-// 🚀 MAIN
-async function startStream(url){
-
+function startStream(rawUrl) {
     attemptId++;
-    const id = attemptId;
+    const currentAttempt = attemptId;
+    stopPlayers();
+    spinner.style.display = "block";
+    msg.style.display = "none";
+    
+    let url = rawUrl.trim();
+    log("Analysiere Stream...");
 
-    stopAll();
-    spinner.style.display='block';
-    setStatus('Lade...','l');
+    // XTREAM URL TRANSFORMER
+    // Erkennt http://host:port/user/pass/id
+    const xtreamRegex = /^(https?:\/\/[^/]+)\/([^/]+)\/([^/]+)\/(\d+)$/;
+    const match = url.match(xtreamRegex);
 
-    const xtream = url.match(/^(https?:\/\/[^/]+)\/([^/]+)\/([^/]+)\/(\d+)$/);
+    let variants = [];
+    if(match) {
+        const [full, host, user, pass, id] = match;
+        // Variante 1: HLS Umwandlung (Best Chance)
+        variants.push({type: 'HLS', url: `${host}/live/${user}/${pass}/${id}.m3u8`});
+        // Variante 2: Direkt mit .m3u8 Endung
+        variants.push({type: 'HLS', url: `${url}.m3u8`});
+        // Variante 3: Original MPEG-TS
+        variants.push({type: 'TS', url: url});
+    } else {
+        variants.push({type: 'HLS', url: url});
+        variants.push({type: 'TS', url: url});
+        variants.push({type: 'Native', url: url});
+    }
 
-    // XTREAM MAGIC
-    if(xtream){
-        const host=xtream[1];
-        const user=xtream[2];
-        const pass=xtream[3];
-        const idd=xtream[4];
-
-        const hls = `${host}/live/${user}/${pass}/${idd}.m3u8`;
-        const ts  = `${host}/live/${user}/${pass}/${idd}.ts`;
-
-        const codec = await detectCodec(hls);
-
-        if(codec==='h265'){
-            spinner.style.display='none';
-            setStatus('❌ H265 NICHT SUPPORTET','er');
+    let vIdx = 0;
+    function tryNext() {
+        if(currentAttempt !== attemptId) return;
+        if(vIdx >= variants.length) {
+            spinner.style.display = "none";
+            msg.innerHTML = "Wiedergabe fehlgeschlagen.<br>Codec nicht unterstützt.";
+            msg.style.display = "block";
             return;
         }
 
-        tryHLS(hls,
-            ()=>{
-                if(id!==attemptId)return;
-                spinner.style.display='none';
-                setStatus('✅ HLS','ok');
-            },
-            ()=>tryTS(ts,
-                ()=>{
-                    if(id!==attemptId)return;
-                    spinner.style.display='none';
-                    setStatus('✅ TS','ok');
-                },
-                ()=>tryNative(ts,
-                    ()=>{
-                        spinner.style.display='none';
-                        setStatus('✅ Native','ok');
-                    },
-                    ()=>{
-                        spinner.style.display='none';
-                        setStatus('❌ Geht nicht','er');
-                    }
-                )
-            )
-        );
+        const v = variants[vIdx++];
+        log(`Versuche ${v.type}...`);
 
-    } else {
-
-        // NORMAL
-        if(url.includes('.m3u8')){
-            const codec = await detectCodec(url);
-
-            if(codec==='h265'){
-                spinner.style.display='none';
-                setStatus('❌ H265 NICHT SUPPORTET','er');
-                return;
-            }
-
-            tryHLS(url,
-                ()=>{
-                    spinner.style.display='none';
-                    setStatus('✅ HLS','ok');
-                },
-                ()=>{
-                    spinner.style.display='none';
-                    setStatus('❌ Fehler','er');
-                }
-            );
-        } else {
-            tryTS(url,
-                ()=>{
-                    spinner.style.display='none';
-                    setStatus('✅ TS','ok');
-                },
-                ()=>{
-                    spinner.style.display='none';
-                    setStatus('❌ Fehler','er');
-                }
-            );
-        }
+        if(v.type === 'HLS') playHLS(v.url, tryNext);
+        else if(v.type === 'TS') playTS(v.url, tryNext);
+        else playNative(v.url, tryNext);
     }
+
+    video.onplaying = () => { 
+        if(currentAttempt === attemptId) {
+            spinner.style.display = "none"; 
+            log("Aktiv: " + variants[vIdx-1].type);
+        }
+    };
+    
+    tryNext();
 }
 
-// TEST
-startStream("http://4kblue8k.xyz:2095/argu.1958/e19059078b0e25a7/22596");
+// --- AppInventor Kommunikation ---
+setInterval(() => {
+    try {
+        const cmd = window.AppInventor.getWebViewString();
+        if(cmd && cmd !== currentCmd) {
+            currentCmd = cmd;
+            if(cmd.startsWith("SETLIST:")) {
+                const p = cmd.slice(8).split('~~~');
+                urlList = p[0].split('||');
+                nameList = p[1].split('||');
+                currentIndex = parseInt(p[2]);
+                startStream(urlList[currentIndex]);
+            } else if(cmd.startsWith("PLAY:")) {
+                startStream(cmd.slice(5));
+            }
+        }
+    } catch(e){}
+}, 400);
 
+// Unmute bei Klick
+window.onclick = () => { video.muted = false; video.volume = 1.0; };
 </script>
 </body>
 </html>
