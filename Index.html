@@ -3,151 +3,136 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Ultimate IPTV Player V4</title>
+    <title>IPTV Player - Stable</title>
     <script src="https://cdn.jsdelivr.net/npm/hls.js@latest"></script>
     <script src="https://cdn.jsdelivr.net/npm/mpegts.js@latest/dist/mpegts.min.js"></script>
     <style>
-        body,html{margin:0;padding:0;width:100%;height:100%;background:#000;overflow:hidden;font-family:sans-serif;}
-        video{position:absolute;width:100%;height:100%;object-fit:contain;z-index:1;}
-        #spinner{position:fixed;top:50%;left:50%;transform:translate(-50%,-50%);z-index:300;width:60px;height:60px;border:5px solid rgba(255,255,255,0.1);border-top:5px solid #e50914;border-radius:50%;display:none;animation:spin 0.8s linear infinite;}
-        @keyframes spin{to{transform:translate(-50%,-50%) rotate(360deg);}}
-        #msg{position:fixed;top:50%;left:50%;transform:translate(-50%,-50%);z-index:400;color:white;text-align:center;background:rgba(0,0,0,0.85);padding:25px;border-radius:15px;border:1px solid #e50914;display:none;max-width:80%;}
-        #ui-status{position:fixed;top:15px;left:15px;z-index:500;color:#0f0;font-size:11px;background:rgba(0,0,0,0.6);padding:5px 10px;border-radius:5px;pointer-events:none;}
-        #unmute-hint{position:fixed;bottom:20px;left:50%;transform:translateX(-50%);z-index:500;background:#e50914;color:white;padding:12px 25px;border-radius:30px;font-weight:bold;display:none;cursor:pointer;box-shadow:0 4px 15px rgba(0,0,0,0.5);}
+        body, html { margin: 0; padding: 0; width: 100%; height: 100%; background: #000; overflow: hidden; font-family: sans-serif; display: flex; justify-content: center; align-items: center; }
+        video { position: absolute; width: 100%; height: 100%; object-fit: contain; z-index: 1; }
+        #spinner { position: absolute; z-index: 10; width: 50px; height: 50px; border: 4px solid rgba(255,255,255,0.2); border-top: 4px solid #e50914; border-radius: 50%; display: none; animation: spin 1s linear infinite; }
+        @keyframes spin { 100% { transform: rotate(360deg); } }
+        #msg { position: absolute; z-index: 20; color: white; background: rgba(0,0,0,0.8); padding: 15px 25px; border-radius: 8px; display: none; text-align: center; }
+        #debug { position: absolute; top: 10px; left: 10px; z-index: 30; color: yellow; font-size: 12px; background: rgba(0,0,0,0.5); padding: 5px; }
     </style>
 </head>
 <body>
 
-<video id="video" playsinline autoplay muted></video>
+<video id="video" playsinline autoplay></video>
 <div id="spinner"></div>
 <div id="msg"></div>
-<div id="ui-status">Bereit...</div>
-<div id="unmute-hint" onclick="unmute()">🔊 SESİ AÇ</div>
+<div id="debug" style="display:none;"></div>
 
 <script>
     const video = document.getElementById('video');
     const spinner = document.getElementById('spinner');
     const msg = document.getElementById('msg');
-    const uiStatus = document.getElementById('ui-status');
-    const unmuteHint = document.getElementById('unmute-hint');
+    
+    let hls = null;
+    let ts = null;
+    let lastCmd = "";
 
-    let hls = null, ts = null, currentUrl = '', attemptId = 0;
-
-    function log(m) { uiStatus.textContent = m; console.log(m); }
-
-    function stop() {
-        if(hls){ hls.destroy(); hls=null; }
-        if(ts){ ts.unload(); ts.detachMediaElement(); ts.destroy(); ts=null; }
-        video.pause(); video.src = ""; video.load();
+    function stopAll() {
+        if (hls) { hls.destroy(); hls = null; }
+        if (ts) { ts.unload(); ts.detachMediaElement(); ts.destroy(); ts = null; }
+        video.pause();
+        video.removeAttribute('src');
+        video.load();
     }
 
-    function showMsg(title, text) {
-        msg.innerHTML = `<h3 style="margin:0 0 10px 0">${title}</h3><p>${text}</p>`;
+    function showMessage(text) {
+        msg.innerHTML = text;
         msg.style.display = 'block';
         spinner.style.display = 'none';
     }
 
-    function unmute() {
-        video.muted = false;
-        video.volume = 1.0;
-        unmuteHint.style.display = 'none';
+    function playNative(url) {
+        video.src = url;
+        video.play().catch(() => {
+            showMessage("Oynatılamıyor / Desteklenmeyen Format");
+        });
     }
 
-    // --- Strategie 1: HLS (Beste für Web) ---
-    function tryHLS(url, next) {
-        if (!Hls.isSupported()) return next();
-        hls = new Hls({ enableWorker: true, manifestLoadingTimeOut: 8000 });
-        hls.loadSource(url);
-        hls.attachMedia(video);
-        hls.on(Hls.Events.MANIFEST_PARSED, () => { log("HLS Manifest OK"); video.play(); });
-        hls.on(Hls.Events.ERROR, (e, data) => { if(data.fatal) { hls.destroy(); hls=null; next(); } });
-    }
-
-    // --- Strategie 2: MPEG-TS (Xtream Standard) ---
-    function tryTS(url, next) {
-        if (!mpegts.getFeatureList().mseLivePlayback) return next();
-        ts = mpegts.createPlayer({ type: 'mse', isLive: true, url: url }, { enableStashBuffer: false });
+    function playTS(url, fallbackUrl) {
+        if (!mpegts.getFeatureList().mseLivePlayback) {
+            playNative(fallbackUrl || url);
+            return;
+        }
+        ts = mpegts.createPlayer({ type: 'mse', isLive: true, url: url });
         ts.attachMediaElement(video);
         ts.load();
-        ts.play().catch(next);
-        // Timeout falls TS hängen bleibt
-        setTimeout(() => { if(video.readyState < 2 && ts) { stop(); next(); } }, 7000);
+        ts.play().catch(() => playNative(fallbackUrl || url));
+
+        ts.on(mpegts.Events.ERROR, () => {
+            stopAll();
+            playNative(fallbackUrl || url);
+        });
     }
 
-    function startStream(url) {
-        attemptId++;
-        const thisAttempt = attemptId;
-        stop();
+    function playHLS(url, fallbackUrl) {
+        if (!Hls.isSupported()) {
+            playTS(fallbackUrl, fallbackUrl);
+            return;
+        }
+        hls = new Hls({ enableWorker: true });
+        hls.loadSource(url);
+        hls.attachMedia(video);
+        
+        hls.on(Hls.Events.MANIFEST_PARSED, () => { video.play(); });
+        
+        hls.on(Hls.Events.ERROR, (e, data) => {
+            if (data.fatal) {
+                stopAll();
+                playTS(fallbackUrl, fallbackUrl); // Wenn HLS scheitert, probiere TS
+            }
+        });
+    }
+
+    function startStream(rawUrl) {
+        stopAll();
         msg.style.display = 'none';
         spinner.style.display = 'block';
-        log("Stream wird analysiert...");
-
-        // XTREAM-LOGIK: URL UMWANDELN
-        let hlsUrl = url;
-        let isXtream = false;
-
-        // Fall A: http://host:port/user/pass/id
+        
+        const url = rawUrl.trim();
+        
+        // Simpler Xtream-Check: Aus /user/pass/123 mache /live/user/pass/123.m3u8
         const xtreamMatch = url.match(/^(https?:\/\/[^/]+)\/([^/]+)\/([^/]+)\/(\d+)$/);
-        // Fall B: http://host:port/get.php?username=u&password=p&id=123 (vereinfacht)
-        const apiMatch = url.includes('get.php') && url.includes('username=') && url.includes('password=');
-
+        
         if (xtreamMatch) {
-            const [_, host, user, pass, id] = xtreamMatch;
-            hlsUrl = `${host}/live/${user}/${pass}/${id}.m3u8`;
-            isXtream = true;
-        } else if (apiMatch) {
-            try {
-                const uObj = new URL(url);
-                const user = uObj.searchParams.get('username');
-                const pass = uObj.searchParams.get('password');
-                const id = uObj.searchParams.get('id') || url.split('&').pop().split('=').pop(); // Notlösung für ID
-                if(user && pass) {
-                    hlsUrl = `${uObj.origin}/live/${user}/${pass}/${id}.m3u8`;
-                    isXtream = true;
-                }
-            } catch(e) {}
+            const hlsUrl = `${xtreamMatch[1]}/live/${xtreamMatch[2]}/${xtreamMatch[3]}/${xtreamMatch[4]}.m3u8`;
+            // Versuche HLS, wenn das schiefgeht, nutze die Original-URL für TS/Native
+            playHLS(hlsUrl, url);
+        } 
+        else if (url.includes('.m3u8')) {
+            playHLS(url, url);
+        } 
+        else {
+            playTS(url, url);
         }
-
-        const run = () => {
-            if (thisAttempt !== attemptId) return;
-            
-            log("Versuche HLS-Modus...");
-            tryHLS(hlsUrl, () => {
-                log("Versuche TS-Modus...");
-                tryTS(url, () => {
-                    log("Versuche Native-Modus...");
-                    video.src = url;
-                    video.play().catch(() => {
-                        showMsg("Codec Hatası", "Bu yayın formatı cihazınız tarafından desteklenmiyor (H.265/AC3).");
-                    });
-                });
-            });
-        };
-
-        run();
     }
 
-    video.onplaying = () => {
-        spinner.style.display = 'none';
-        log("Yayın Aktif");
-        if (video.muted) unmuteHint.style.display = 'block';
-    };
+    // Lade-Spinner ausblenden, sobald das Video läuft
+    video.onplaying = () => { spinner.style.display = 'none'; msg.style.display = 'none'; };
+    
+    // Ton anschalten bei Klick
+    window.onclick = () => { video.muted = false; };
 
-    video.onerror = () => {
-        if(attemptId > 0) log("Medya Hatası - Codec uyuşmazlığı?");
-    };
-
-    // --- Kodular Kommunikation ---
+    // --- Verbindung zu Kodular ---
     setInterval(() => {
         try {
             const cmd = window.AppInventor.getWebViewString();
-            if (cmd && cmd !== currentUrl) {
-                currentUrl = cmd;
-                if(cmd.startsWith("PLAY:")) startStream(cmd.slice(5));
-                else if(cmd.includes("://")) startStream(cmd);
+            if (cmd && cmd !== lastCmd) {
+                lastCmd = cmd;
+                if (cmd.startsWith("PLAY:")) {
+                    startStream(cmd.slice(5));
+                } else if (cmd.startsWith("SETLIST:")) {
+                    const parts = cmd.slice(8).split('~~~');
+                    const urls = parts[0] ? parts[0].split('||') : [];
+                    const index = parts[2] ? parseInt(parts[2]) : 0;
+                    if (urls[index]) startStream(urls[index]);
+                }
             }
         } catch(e) {}
-    }, 400);
+    }, 500);
 
 </script>
 </body>
