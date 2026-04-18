@@ -1,229 +1,195 @@
 <!DOCTYPE html>
 <html lang="tr">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>IPTV Player</title>
-    <script src="https://cdn.jsdelivr.net/npm/hls.js@latest"></script>
-    <script src="https://cdn.jsdelivr.net/npm/mpegts.js@latest/dist/mpegts.min.js"></script>
-    <style>
-        body,html{margin:0;padding:0;width:100%;height:100%;background:#000;overflow:hidden;display:flex;justify-content:center;align-items:center;}
-        video{position:absolute;width:100%;height:100%;object-fit:contain;z-index:1;}
-        #spinner{position:fixed;top:50%;left:50%;transform:translate(-50%,-50%);z-index:300;width:56px;height:56px;border:5px solid rgba(255,255,255,0.15);border-top:5px solid #e50914;border-radius:50%;display:none;animation:spin 0.8s linear infinite;}
-        @keyframes spin{to{transform:translate(-50%,-50%) rotate(360deg);}}
-        #msg{position:relative;z-index:100;color:#fff;font-family:sans-serif;font-size:20px;font-weight:bold;text-align:center;background:rgba(0,0,0,0.75);padding:22px;border-radius:14px;border:2px solid rgba(255,255,255,0.2);}
-        #channelInfo{position:fixed;bottom:28px;left:50%;transform:translateX(-50%);z-index:200;color:#fff;font-family:sans-serif;font-size:19px;font-weight:bold;background:rgba(0,0,0,0.78);padding:9px 22px;border-radius:10px;border:2px solid rgba(255,255,255,0.15);display:none;transition:opacity 0.4s;}
-        #st{position:fixed;top:10px;left:10px;z-index:300;font-family:sans-serif;font-size:12px;font-weight:bold;padding:6px 12px;border-radius:7px;display:none;transition:opacity 0.7s;}
-        #st.l{background:rgba(0,0,0,0.8);color:#ffcc00;border:1px solid #ffcc00;}
-        #st.ok{background:rgba(0,70,0,0.85);color:#00ff00;border:1px solid #00ff00;}
-        #st.er{background:rgba(70,0,0,0.85);color:#ff4444;border:1px solid #ff4444;}
-    </style>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>IPTV Player</title>
+
+<script src="https://cdn.jsdelivr.net/npm/hls.js@latest"></script>
+<script src="https://cdn.jsdelivr.net/npm/mpegts.js@latest/dist/mpegts.min.js"></script>
+
+<style>
+body,html{margin:0;padding:0;width:100%;height:100%;background:#000;overflow:hidden;display:flex;justify-content:center;align-items:center;}
+video{position:absolute;width:100%;height:100%;object-fit:contain;z-index:1;}
+#spinner{position:fixed;top:50%;left:50%;transform:translate(-50%,-50%);z-index:300;width:56px;height:56px;border:5px solid rgba(255,255,255,0.15);border-top:5px solid #e50914;border-radius:50%;display:none;animation:spin 0.8s linear infinite;}
+@keyframes spin{to{transform:translate(-50%,-50%) rotate(360deg);}}
+#msg{position:relative;z-index:100;color:#fff;font-family:sans-serif;font-size:20px;font-weight:bold;text-align:center;background:rgba(0,0,0,0.75);padding:22px;border-radius:14px;border:2px solid rgba(255,255,255,0.2);}
+#channelInfo{position:fixed;bottom:28px;left:50%;transform:translateX(-50%);z-index:200;color:#fff;font-family:sans-serif;font-size:19px;font-weight:bold;background:rgba(0,0,0,0.78);padding:9px 22px;border-radius:10px;border:2px solid rgba(255,255,255,0.15);display:none;}
+#st{position:fixed;top:10px;left:10px;z-index:300;font-family:sans-serif;font-size:12px;font-weight:bold;padding:6px 12px;border-radius:7px;display:none;}
+#st.ok{background:rgba(0,70,0,0.85);color:#00ff00;}
+#st.er{background:rgba(70,0,0,0.85);color:#ff4444;}
+#st.l{background:rgba(0,0,0,0.8);color:#ffcc00;}
+</style>
 </head>
+
 <body>
+
 <video id="video" playsinline autoplay muted></video>
 <div id="spinner"></div>
-<div id="msg" style="display:none;"></div>
+<div id="msg"></div>
 <div id="channelInfo"></div>
 <div id="st"></div>
+
 <script>
 const video = document.getElementById('video');
 const spinner = document.getElementById('spinner');
 const msg = document.getElementById('msg');
-const channelInfo = document.getElementById('channelInfo');
 const st = document.getElementById('st');
 
-let hasInteracted = false, currentCmd = '';
-let urlList = [], nameList = [], currentIndex = 0;
-let infoTimer, stTimer, zapTimer;
-let activeUrl = '', attemptId = 0;
+let attemptId = 0;
 
-// ── UI ──────────────────────────────────────────────────
-function setStatus(text, cls, dur) {
-    if (stTimer) clearTimeout(stTimer);
-    st.textContent = text; st.className = cls;
-    st.style.display = 'block'; st.style.opacity = '1';
-    stTimer = setTimeout(() => { st.style.opacity='0'; setTimeout(()=>st.style.display='none',700); }, dur||5000);
-}
-function showInfo(name, idx) {
-    channelInfo.textContent = (idx+1)+'. '+name;
-    channelInfo.style.display = 'block'; channelInfo.style.opacity = '1';
-    if (infoTimer) clearTimeout(infoTimer);
-    infoTimer = setTimeout(() => { channelInfo.style.opacity='0'; setTimeout(()=>channelInfo.style.display='none',400); }, 3000);
-}
-function applyAudio() {
-    if (hasInteracted) { video.muted=false; video.volume=1.0; video.play().catch(()=>{}); msg.style.display='none'; }
-    else { video.play().catch(()=>{}); msg.innerHTML='Ses için OK tuşuna bas'; msg.style.display='block'; }
-}
-function forcePlay() { hasInteracted=true; video.muted=false; video.volume=1.0; video.play().catch(()=>{}); msg.style.display='none'; }
-window.addEventListener('click', forcePlay);
-window.addEventListener('keydown', e => {
-    if (!hasInteracted) forcePlay();
-    if (!urlList.length) return;
-    if (e.keyCode===40||e.keyCode===229) { currentIndex=(currentIndex+1)%urlList.length; doZap(); }
-    else if (e.keyCode===38||e.keyCode===228) { currentIndex=(currentIndex-1+urlList.length)%urlList.length; doZap(); }
-});
-function doZap() {
-    showInfo(nameList[currentIndex]||'?', currentIndex);
-    window.AppInventor.setWebViewString('INDEX:'+currentIndex);
-    if (zapTimer) clearTimeout(zapTimer);
-    zapTimer = setTimeout(() => startStream(urlList[currentIndex]), 100);
+// 🔍 H.265 Detection
+async function detectCodec(url){
+    try{
+        const r = await fetch(url);
+        const t = await r.text();
+        if(t.includes('hev1')||t.includes('hvc1')) return 'h265';
+        if(t.includes('avc1')) return 'h264';
+        return 'unknown';
+    }catch(e){
+        return 'unknown';
+    }
 }
 
-// ── Player stoppen ───────────────────────────────────────
-function stopAll() {
-    if (window._H) { try{window._H.destroy();}catch(e){} window._H=null; }
-    if (window._T) { try{window._T.unload();window._T.detachMediaElement();window._T.destroy();}catch(e){} window._T=null; }
-    video.oncanplay=null; video.onerror=null; video.onstalled=null;
-    video.src=''; video.load();
+// UI
+function setStatus(text, cls){
+    st.innerText = text;
+    st.className = cls;
+    st.style.display='block';
+    setTimeout(()=>st.style.display='none',5000);
 }
 
-// ════════════════════════════════════════════════════════
-//  P1: Native <video>
-// ════════════════════════════════════════════════════════
-function tryNative(url, onOK, onFail) {
-    video.src = url; video.load();
-    let done = false;
-    const t = setTimeout(() => { if(!done){done=true; video.oncanplay=null; video.onerror=null; onFail();} }, 8000);
-    video.oncanplay = () => { if(done)return; done=true; clearTimeout(t); onOK(); };
-    video.onerror   = () => { if(done)return; done=true; clearTimeout(t); onFail(); };
+// STOP
+function stopAll(){
+    if(window._H){try{_H.destroy()}catch(e){}}
+    if(window._T){try{_T.destroy()}catch(e){}}
+    video.src='';
 }
 
-// ════════════════════════════════════════════════════════
-//  P2: mpegts.js 
-// ════════════════════════════════════════════════════════
-function tryMpegts(url, onOK, onFail, maxMs) {
-    if (!mpegts?.getFeatureList().mseLivePlayback) { onFail(); return; }
-    const p = mpegts.createPlayer(
-        { type:'mse', isLive:true, url },
-        { enableWorker:true, enableStashBuffer:false, stashInitialSize:128 }
-    );
-    window._T = p; p.attachMediaElement(video); p.load();
-    let done = false;
-    const checker = setInterval(() => {
-        if (video.readyState >= 2 || (video.buffered.length>0 && video.buffered.end(0)>0.3)) {
-            if(done)return; done=true; clearInterval(checker); clearTimeout(t); onOK();
-        }
-    }, 300);
-    const fail = () => { if(done)return; done=true; clearInterval(checker); clearTimeout(t); try{p.unload();p.detachMediaElement();p.destroy();}catch(e){} if(window._T===p)window._T=null; onFail(); };
-    p.on(mpegts.Events.ERROR, fail);
-    const t = setTimeout(fail, maxMs||8000);
+// HLS
+function tryHLS(url, ok, fail){
+    if(!Hls.isSupported()){fail();return;}
+    const h = new Hls();
+    window._H = h;
+    h.loadSource(url);
+    h.attachMedia(video);
+
+    h.on(Hls.Events.MANIFEST_PARSED, ()=>ok());
+    h.on(Hls.Events.ERROR, ()=>fail());
 }
 
-// ════════════════════════════════════════════════════════
-//  P3: HLS.js 
-// ════════════════════════════════════════════════════════
-function tryHLS(url, onOK, onFail) {
-    if (!Hls?.isSupported()) { onFail(); return; }
-    const h = new Hls({
-        startLevel:-1, autoStartLoad:true, maxBufferLength:30,
-        manifestLoadingTimeOut:10000, manifestLoadingMaxRetry:1, manifestLoadingRetryDelay:1500,
-        enableWorker:true, xhrSetup: xhr => { xhr.withCredentials=false; }
-    });
-    window._H=h; h.loadSource(url); h.attachMedia(video);
-    let done=false;
-    const t = setTimeout(()=>{ if(!done){done=true; try{h.destroy();}catch(e){} if(window._H===h)window._H=null; onFail();} }, 12000);
-
-    h.on(Hls.Events.MANIFEST_PARSED, () => {
-        if(done)return; done=true; clearTimeout(t); onOK();
-        h.off(Hls.Events.ERROR);
-        h.on(Hls.Events.ERROR, (e,d) => {
-            if (d.fatal && activeUrl===url) {
-                try{h.destroy();}catch(e){} window._H=null;
-                setTimeout(()=>{ if(activeUrl===url) tryHLS(url,()=>{},()=>{}); },3000);
-            }
-        });
-    });
-    h.on(Hls.Events.ERROR, (e,d) => {
-        if (d.fatal && !done) { done=true; clearTimeout(t); try{h.destroy();}catch(e){} if(window._H===h)window._H=null; onFail(); }
-    });
+// TS
+function tryTS(url, ok, fail){
+    if(!mpegts.getFeatureList().mseLivePlayback){fail();return;}
+    const p = mpegts.createPlayer({type:'mse',url});
+    window._T = p;
+    p.attachMediaElement(video);
+    p.load();
+    setTimeout(ok,2000);
 }
 
-// ════════════════════════════════════════════════════════
-//  HAUPT-FUNKTION MIT XTREAM-HLS-CONVERTER
-// ════════════════════════════════════════════════════════
-function startStream(url) {
-    if (!url) return;
-    const id = ++attemptId;
-    activeUrl = url.trim();
+// Native
+function tryNative(url, ok, fail){
+    video.src=url;
+    video.oncanplay=ok;
+    video.onerror=fail;
+}
+
+// 🚀 MAIN
+async function startStream(url){
+
+    attemptId++;
+    const id = attemptId;
+
     stopAll();
     spinner.style.display='block';
-    setStatus('⏳ Yükleniyor...','l',30000);
+    setStatus('Lade...','l');
 
-    const lo = activeUrl.toLowerCase();
-    const isM3U8    = lo.includes('.m3u8');
-    const isWorker  = lo.includes('workers.dev')||lo.includes('.gif')||lo.includes('.txt')||lo.includes('.css');
-    const isExtTS   = !isM3U8 && (lo.endsWith('.ts')||lo.includes('extension=ts')||lo.includes('type=m3u_plus'));
-    const isStalker = lo.includes('live.php')&&lo.includes('mac=');
-    
-    // RegEx zur Erkennung von Standard-Xtream Links (http://host:port/user/pass/12345)
-    const xtreamMatch = activeUrl.match(/^(https?:\/\/[^/]+)\/([^/]+)\/([^/]+)\/(\d+)$/);
+    const xtream = url.match(/^(https?:\/\/[^/]+)\/([^/]+)\/([^/]+)\/(\d+)$/);
 
-    const v = () => id===attemptId;
-    const win = (m) => { if(!v())return; spinner.style.display='none'; setStatus('✅ '+m,'ok',5000); applyAudio(); };
-    const lose= () => { if(!v())return; spinner.style.display='none'; setStatus('❌ Yayın açılamadı','er',8000); };
-    const g   = fn => () => { if(v()) fn(); else stopAll(); };
+    // XTREAM MAGIC
+    if(xtream){
+        const host=xtream[1];
+        const user=xtream[2];
+        const pass=xtream[3];
+        const idd=xtream[4];
 
-    if (xtreamMatch) {
-        // MAGIC TRICK: Wir bauen die URL von TS auf HLS um!
-        // Aus host/user/pass/id wird host/live/user/pass/id.m3u8
-        const host = xtreamMatch[1];
-        const user = xtreamMatch[2];
-        const pass = xtreamMatch[3];
-        const streamId = xtreamMatch[4];
-        const convertedHlsUrl = `${host}/live/${user}/${pass}/${streamId}.m3u8`;
+        const hls = `${host}/live/${user}/${pass}/${idd}.m3u8`;
+        const ts  = `${host}/live/${user}/${pass}/${idd}.ts`;
 
-        console.log("Xtream erkannt! Konvertiere zu HLS:", convertedHlsUrl);
+        const codec = await detectCodec(hls);
 
-        // Wir versuchen zuerst die umgebaute HLS-URL, dann die Original-URL Nativ, dann mpegts
-        tryHLS(convertedHlsUrl, g(()=>win('Xtream-HLS Mode')),
-            g(()=>tryNative(activeUrl, g(()=>win('Native')),
-                g(()=>tryMpegts(activeUrl, g(()=>win('mpegts')), lose, 8000))
-            ))
+        if(codec==='h265'){
+            spinner.style.display='none';
+            setStatus('❌ H265 NICHT SUPPORTET','er');
+            return;
+        }
+
+        tryHLS(hls,
+            ()=>{
+                if(id!==attemptId)return;
+                spinner.style.display='none';
+                setStatus('✅ HLS','ok');
+            },
+            ()=>tryTS(ts,
+                ()=>{
+                    if(id!==attemptId)return;
+                    spinner.style.display='none';
+                    setStatus('✅ TS','ok');
+                },
+                ()=>tryNative(ts,
+                    ()=>{
+                        spinner.style.display='none';
+                        setStatus('✅ Native','ok');
+                    },
+                    ()=>{
+                        spinner.style.display='none';
+                        setStatus('❌ Geht nicht','er');
+                    }
+                )
+            )
         );
 
-    } else if (isM3U8) {
-        tryHLS(activeUrl, g(()=>win('HLS')),
-            g(()=>tryMpegts(activeUrl, g(()=>win('mpegts')),
-                g(()=>tryNative(activeUrl, g(()=>win('Native')), lose)),
-            8000)));
-
-    } else if (isWorker) {
-        tryHLS(activeUrl, g(()=>win('HLS')),
-            g(()=>tryNative(activeUrl, g(()=>win('Native')), lose)));
-
-    } else if (isExtTS || isStalker) {
-        tryMpegts(activeUrl, g(()=>win('mpegts')),
-            g(()=>tryNative(activeUrl, g(()=>win('Native')),
-                g(()=>tryHLS(activeUrl, g(()=>win('HLS')), lose))
-            )),
-        8000);
-
     } else {
-        tryNative(activeUrl, g(()=>win('Native')),
-            g(()=>tryHLS(activeUrl, g(()=>win('HLS')),
-                g(()=>tryMpegts(activeUrl, g(()=>win('mpegts')), lose, 8000))
-            )));
+
+        // NORMAL
+        if(url.includes('.m3u8')){
+            const codec = await detectCodec(url);
+
+            if(codec==='h265'){
+                spinner.style.display='none';
+                setStatus('❌ H265 NICHT SUPPORTET','er');
+                return;
+            }
+
+            tryHLS(url,
+                ()=>{
+                    spinner.style.display='none';
+                    setStatus('✅ HLS','ok');
+                },
+                ()=>{
+                    spinner.style.display='none';
+                    setStatus('❌ Fehler','er');
+                }
+            );
+        } else {
+            tryTS(url,
+                ()=>{
+                    spinner.style.display='none';
+                    setStatus('✅ TS','ok');
+                },
+                ()=>{
+                    spinner.style.display='none';
+                    setStatus('❌ Fehler','er');
+                }
+            );
+        }
     }
 }
 
-// ── Komut Handler ────────────────────────────────────────
-function handleCommand(cmd) {
-    if (!cmd||cmd.startsWith('INDEX:')) return;
-    if (cmd.startsWith('SETLIST:')) {
-        const p=cmd.slice(8).split('~~~');
-        urlList=p[0]?p[0].split('||'):[];
-        nameList=p[1]?p[1].split('||'):[];
-        currentIndex=p[2]?parseInt(p[2]):0;
-        if(urlList[currentIndex]){ startStream(urlList[currentIndex]); showInfo(nameList[currentIndex]||'?',currentIndex); }
-    } else if (cmd.startsWith('PLAY:')) {
-        startStream(cmd.slice(5));
-    } else if (cmd.includes('://')) {
-        startStream(cmd);
-    }
-}
-setInterval(()=>{
-    try{ const cmd=window.AppInventor.getWebViewString(); if(cmd&&cmd!==currentCmd){currentCmd=cmd;handleCommand(cmd);} }catch(e){}
-},300);
+// TEST
+startStream("http://4kblue8k.xyz:2095/argu.1958/e19059078b0e25a7/22596");
+
 </script>
 </body>
 </html>
